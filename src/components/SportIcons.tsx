@@ -15,17 +15,21 @@ export const SPORT_ICON_OPTIONS: { key: SportIconKey; label: string }[] = [
   { key: 'volleyball', label: 'Volleyball' },
 ];
 
+const BASE_URL = import.meta.env.BASE_URL.endsWith('/')
+  ? import.meta.env.BASE_URL
+  : `${import.meta.env.BASE_URL}/`;
+
 const SPORT_ICON_SRC: Record<SportIconKey, string> = {
-  pawn: '/icons/pawn.png',
-  tileS: '/icons/tileS.png',
-  cubeW: '/icons/cubeW.png',
-  shuttlecock: '/icons/shuttlecock.png',
-  dartboard: '/icons/dartboard.png',
-  stars3: '/icons/stars3.png',
-  conch: '/icons/conch.png',
-  paddle: '/icons/paddle.png',
-  basketball: '/icons/basketball.png',
-  volleyball: '/icons/volleyball.png',
+  pawn: `${BASE_URL}icons/pawn.png`,
+  tileS: `${BASE_URL}icons/tileS.png`,
+  cubeW: `${BASE_URL}icons/cubeW.png`,
+  shuttlecock: `${BASE_URL}icons/shuttlecock.png`,
+  dartboard: `${BASE_URL}icons/dartboard.png`,
+  stars3: `${BASE_URL}icons/stars3.png`,
+  conch: `${BASE_URL}icons/conch.png`,
+  paddle: `${BASE_URL}icons/paddle.png`,
+  basketball: `${BASE_URL}icons/basketball.png`,
+  volleyball: `${BASE_URL}icons/volleyball.png`,
 };
 
 interface SportIconProps {
