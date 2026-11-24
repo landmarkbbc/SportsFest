@@ -1,0 +1,220 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: deny all collections not explicitly matched below.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Shared primitive helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Game schema validation
+    function isValidGame(data, gameId) {
+      return data.keys().hasAll(['id', 'name', 'type', 'eligibility', 'session', 'iconKey', 'createdAt'])
+        && data.keys().hasOnly(['id', 'name', 'type', 'eligibility', 'session', 'iconKey', 'usesSkillLevel', 'hasDivisions', 'minPlayersPerTeam', 'pointsPerMatchWin', 'pointsChampion', 'createdAt', 'updatedAt'])
+        && data.id == gameId
+        && isValidId(data.id)
+        && data.name is string
+        && data.name.size() >= 1
+        && data.name.size() <= 80
+        && data.type in ['individual', 'pairs', 'team']
+        && data.eligibility in ['everyone', 'men', 'women']
+        && data.session in ['morning', 'afternoon']
+        && (data.iconKey == null || data.iconKey in ['pawn', 'tileS', 'cubeW', 'shuttlecock', 'dartboard', 'stars3', 'conch', 'paddle', 'basketball', 'volleyball'])
+        && (!('usesSkillLevel' in data) || data.usesSkillLevel is bool)
+        && (!('hasDivisions' in data) || data.hasDivisions is bool)
+        && (!('minPlayersPerTeam' in data) || data.minPlayersPerTeam == null || (data.minPlayersPerTeam is int && data.minPlayersPerTeam >= 1 && data.minPlayersPerTeam <= 99))
+        && (!('pointsPerMatchWin' in data) || (data.pointsPerMatchWin is int && data.pointsPerMatchWin >= 0 && data.pointsPerMatchWin <= 99))
+        && (!('pointsChampion' in data) || (data.pointsChampion is int && data.pointsChampion >= 0 && data.pointsChampion <= 99))
+        && data.createdAt is int
+        && data.createdAt > 0
+        && (!('updatedAt' in data) || (data.updatedAt is int && data.updatedAt > 0));
+    }
+
+    // Player entry validation
+    function isValidEntry(entry) {
+      return entry is map
+        && entry.keys().hasAll(['slot', 'gameId', 'selfLevel'])
+        && entry.keys().hasOnly(['slot', 'gameId', 'selfLevel', 'overrideLevel'])
+        && entry.slot in ['morning', 'afternoon', 'secondary', 'tertiary']
+        && isValidId(entry.gameId)
+        && entry.selfLevel is int
+        && entry.selfLevel >= 1
+        && entry.selfLevel <= 3
+        && (!('overrideLevel' in entry) || entry.overrideLevel == null || (entry.overrideLevel is int && entry.overrideLevel >= 1 && entry.overrideLevel <= 3));
+    }
+
+    // Player schema validation (0 to 4 entries allowed)
+    function isValidPlayer(data, playerId) {
+      return data.keys().hasAll(['id', 'name', 'department', 'gender', 'entries', 'team', 'isWalkIn', 'isDemo', 'createdAt'])
+        && data.keys().hasOnly(['id', 'name', 'department', 'gender', 'entries', 'team', 'isWalkIn', 'isDemo', 'createdAt', 'updatedAt'])
+        && data.id == playerId
+        && isValidId(data.id)
+        && data.name is string
+        && data.name.size() >= 1
+        && data.name.size() <= 100
+        && data.department in ['Kids', 'YP', 'SP', 'Adults']
+        && data.gender in ['M', 'F']
+        && data.entries is list
+        && data.entries.size() >= 0
+        && data.entries.size() <= 4
+        && (data.entries.size() < 1 || isValidEntry(data.entries[0]))
+        && (data.entries.size() < 2 || isValidEntry(data.entries[1]))
+        && (data.entries.size() < 3 || isValidEntry(data.entries[2]))
+        && (data.entries.size() < 4 || isValidEntry(data.entries[3]))
+        && (data.team == null || data.team in ['blue', 'red'])
+        && data.isWalkIn is bool
+        && data.isDemo is bool
+        && data.createdAt is int
+        && data.createdAt > 0
+        && (!('updatedAt' in data) || (data.updatedAt is int && data.updatedAt > 0));
+    }
+
+    // Bracket snapshot & match validation
+    function isValidBracketSnapshot(snap) {
+      return snap is map
+        && snap.keys().hasAll(['playerId', 'name', 'team', 'dept', 'level'])
+        && snap.keys().hasOnly(['playerId', 'name', 'team', 'dept', 'level'])
+        && isValidId(snap.playerId)
+        && snap.name is string
+        && snap.name.size() >= 1
+        && snap.name.size() <= 100
+        && snap.team in ['blue', 'red']
+        && (snap.dept == null || snap.dept in ['Kids', 'YP', 'SP', 'Adults'])
+        && (snap.level == null || (snap.level is int && snap.level >= 1 && snap.level <= 3));
+    }
+
+    function isValidBracketMatch(item) {
+      return item is map
+        && item.keys().hasAll(['id', 'round', 'a', 'b', 'winner', 'bye', 'sameTeam', 'decidedBy', 'decidedAt'])
+        && item.keys().hasOnly(['id', 'round', 'a', 'b', 'winner', 'bye', 'sameTeam', 'decidedBy', 'decidedAt'])
+        && isValidId(item.id)
+        && item.round is int
+        && item.round >= 1
+        && item.round <= 100
+        && (item.a == null || isValidBracketSnapshot(item.a))
+        && (item.b == null || isValidBracketSnapshot(item.b))
+        && (item.winner == null || item.winner in ['a', 'b'])
+        && item.bye is bool
+        && item.sameTeam is bool
+        && (item.decidedBy == null || (item.decidedBy is string && item.decidedBy.size() >= 1 && item.decidedBy.size() <= 40))
+        && (item.decidedAt == null || (item.decidedAt is int && item.decidedAt > 0));
+    }
+
+    function isValidBracket(data) {
+      return data.keys().hasAll(['format', 'status', 'matches', 'championName', 'championTeam', 'createdAt'])
+        && data.keys().hasOnly(['format', 'status', 'matches', 'championName', 'championTeam', 'division', 'createdAt', 'updatedAt'])
+        && data.format in ['elimination', 'roundrobin', 'teammatch']
+        && data.status in ['active', 'complete']
+        && data.matches is list
+        && data.matches.size() >= 1
+        && data.matches.size() <= 500
+        && isValidBracketMatch(data.matches[0])
+        && (data.championName == null || (data.championName is string && data.championName.size() >= 1 && data.championName.size() <= 100))
+        && (data.championTeam == null || data.championTeam in ['blue', 'red'])
+        && (!('division' in data) || data.division == null || (data.division is int && data.division >= 1 && data.division <= 3))
+        && data.createdAt is int
+        && data.createdAt > 0
+        && (!('updatedAt' in data) || (data.updatedAt is int && data.updatedAt > 0));
+    }
+
+    // Settings schema validation
+    function isValidSettings(data) {
+      return data.keys().hasAll(['adminPinHash', 'scorerPinHash', 'initialized', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['adminPinHash', 'scorerPinHash', 'initialized', 'createdAt', 'updatedAt'])
+        && data.adminPinHash is string
+        && data.adminPinHash.size() == 64
+        && data.adminPinHash.matches('^[a-f0-9]{64}$')
+        && data.scorerPinHash is string
+        && data.scorerPinHash.size() == 64
+        && data.scorerPinHash.matches('^[a-f0-9]{64}$')
+        && data.initialized is bool
+        && data.initialized == true
+        && data.createdAt is int
+        && data.createdAt > 0
+        && data.updatedAt is int
+        && data.updatedAt > 0;
+    }
+
+    match /games/{gameId} {
+      allow get: if isSignedIn() && isValidId(gameId);
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(gameId) && isValidGame(incoming(), gameId);
+      allow update: if isSignedIn()
+        && isValidId(gameId)
+        && isValidGame(incoming(), gameId)
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'type', 'eligibility', 'session', 'iconKey', 'usesSkillLevel', 'hasDivisions', 'minPlayersPerTeam', 'pointsPerMatchWin', 'pointsChampion', 'updatedAt']);
+      allow delete: if isSignedIn() && isValidId(gameId);
+    }
+
+    match /players/{playerId} {
+      allow get: if isSignedIn() && isValidId(playerId);
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(playerId) && isValidPlayer(incoming(), playerId);
+      allow update: if isSignedIn()
+        && isValidId(playerId)
+        && isValidPlayer(incoming(), playerId)
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().isDemo == existing().isDemo
+        && (
+          // Action: Edit player profile/entries/walk-in status
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'department', 'gender', 'entries', 'isWalkIn', 'updatedAt'])
+          ||
+          // Action: Assign or move player team
+          incoming().diff(existing()).affectedKeys().hasOnly(['team', 'updatedAt'])
+          ||
+          // Action: Full edit including team
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'department', 'gender', 'entries', 'team', 'isWalkIn', 'updatedAt'])
+          ||
+          // Action: Remove deleted game entries from player
+          incoming().diff(existing()).affectedKeys().hasOnly(['entries', 'updatedAt'])
+        );
+      allow delete: if isSignedIn() && isValidId(playerId);
+    }
+
+    match /brackets/{gameId} {
+      allow get: if isSignedIn() && isValidId(gameId);
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(gameId) && isValidBracket(incoming());
+      allow update: if isSignedIn()
+        && isValidId(gameId)
+        && isValidBracket(incoming())
+        && incoming().format == existing().format
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'matches', 'championName', 'championTeam', 'updatedAt']);
+      allow delete: if isSignedIn() && isValidId(gameId);
+    }
+
+    match /settings/{settingId} {
+      allow get: if isSignedIn() && settingId == 'app';
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && settingId == 'app' && isValidSettings(incoming());
+      allow update: if isSignedIn()
+        && settingId == 'app'
+        && isValidSettings(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['adminPinHash', 'scorerPinHash', 'updatedAt']);
+      allow delete: if false;
+    }
+  }
+}

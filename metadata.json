@@ -1,0 +1,8 @@
+{
+  "name": "Sports Fest Manager",
+  "description": "Mobile-first church sports fellowship manager for balancing teams, registering players and walk-ins, and tracking sport participation across Blue and Red teams.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

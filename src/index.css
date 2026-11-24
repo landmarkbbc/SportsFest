@@ -1,0 +1,158 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+  --color-page: #0F1419;
+  --color-surface: #171D25;
+  --color-nested: #1E2630;
+  --color-edge: #2A333E;
+  --color-edge-hover: #3B4756;
+  --color-fg: #F1F5F9;
+  --color-fg-muted: #94A3B8;
+  --color-primary: #F1F5F9;
+  --color-primary-hover: #E2E8F0;
+  --color-primary-fg: #0F1419;
+  --color-blue-team: #3B82F6;
+  --color-blue-tint: rgba(59, 130, 246, 0.15);
+  --color-blue-light: #93C5FD;
+  --color-blue-edge: rgba(59, 130, 246, 0.35);
+  --color-red-team: #EF4444;
+  --color-red-tint: rgba(239, 68, 68, 0.15);
+  --color-red-light: #FCA5A5;
+  --color-red-edge: rgba(239, 68, 68, 0.35);
+  --color-overlay: rgba(0, 0, 0, 0.6);
+  --color-status-green-bg: rgba(16, 185, 129, 0.15);
+  --color-status-green-fg: #6EE7B7;
+  --color-status-green-edge: rgba(16, 185, 129, 0.32);
+  --color-status-amber-bg: rgba(245, 158, 11, 0.15);
+  --color-status-amber-fg: #FCD34D;
+  --color-status-amber-edge: rgba(245, 158, 11, 0.32);
+  --color-status-red-bg: rgba(239, 68, 68, 0.15);
+  --color-status-red-fg: #FCA5A5;
+  --color-status-red-edge: rgba(239, 68, 68, 0.32);
+  --color-status-gray-bg: rgba(148, 163, 184, 0.15);
+  --color-status-gray-fg: #CBD5E1;
+}
+
+@theme {
+  --color-page: var(--color-page);
+  --color-surface: var(--color-surface);
+  --color-nested: var(--color-nested);
+  --color-edge: var(--color-edge);
+  --color-edge-hover: var(--color-edge-hover);
+  --color-fg: var(--color-fg);
+  --color-fg-muted: var(--color-fg-muted);
+  --color-primary: var(--color-primary);
+  --color-primary-hover: var(--color-primary-hover);
+  --color-primary-fg: var(--color-primary-fg);
+  --color-blue-team: var(--color-blue-team);
+  --color-blue-tint: var(--color-blue-tint);
+  --color-blue-light: var(--color-blue-light);
+  --color-blue-edge: var(--color-blue-edge);
+  --color-red-team: var(--color-red-team);
+  --color-red-tint: var(--color-red-tint);
+  --color-red-light: var(--color-red-light);
+  --color-red-edge: var(--color-red-edge);
+  --color-overlay: var(--color-overlay);
+  --color-status-green-bg: var(--color-status-green-bg);
+  --color-status-green-fg: var(--color-status-green-fg);
+  --color-status-green-edge: var(--color-status-green-edge);
+  --color-status-amber-bg: var(--color-status-amber-bg);
+  --color-status-amber-fg: var(--color-status-amber-fg);
+  --color-status-amber-edge: var(--color-status-amber-edge);
+  --color-status-red-bg: var(--color-status-red-bg);
+  --color-status-red-fg: var(--color-status-red-fg);
+  --color-status-red-edge: var(--color-status-red-edge);
+  --color-status-gray-bg: var(--color-status-gray-bg);
+  --color-status-gray-fg: var(--color-status-gray-fg);
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: var(--color-page);
+    color: var(--color-fg);
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    background-color: var(--color-page);
+    color: var(--color-fg);
+    min-height: 100dvh;
+  }
+}
+
+.bg-blue-tint-surface {
+  background: linear-gradient(var(--color-blue-tint), var(--color-blue-tint)), var(--color-surface);
+}
+
+.bg-red-tint-surface {
+  background: linear-gradient(var(--color-red-tint), var(--color-red-tint)), var(--color-surface);
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+@keyframes sfmSlideInChip {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes sfmFadeSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes sfmScaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-chip-in {
+  animation: sfmSlideInChip 240ms ease-out both;
+}
+
+.animate-round-in {
+  animation: sfmFadeSlideIn 260ms ease-out both;
+}
+
+.animate-check-in {
+  animation: sfmScaleIn 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-chip-in,
+  .animate-round-in,
+  .animate-check-in {
+    animation: none !important;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,221 @@
+{
+  "entities": {
+    "Game": {
+      "title": "Game",
+      "description": "A sport or tabletop event in the church sports fellowship.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "type": {
+          "type": "string",
+          "enum": ["individual", "pairs", "team"]
+        },
+        "eligibility": {
+          "type": "string",
+          "enum": ["everyone", "men", "women"]
+        },
+        "session": {
+          "type": "string",
+          "enum": ["morning", "afternoon"]
+        },
+        "iconKey": {
+          "type": "string",
+          "description": "One of the 10 sport icon keys or null."
+        },
+        "usesSkillLevel": {
+          "type": "boolean",
+          "description": "Whether this game uses player skill levels."
+        },
+        "hasDivisions": {
+          "type": "boolean",
+          "description": "Whether individual game splits brackets into L1/L2/L3 divisions."
+        },
+        "minPlayersPerTeam": {
+          "type": "integer",
+          "description": "Minimum assigned players per team required to start a team match, or null."
+        },
+        "pointsPerMatchWin": {
+          "type": "integer",
+          "description": "Points awarded to the winner's team per decided non-bye non-same-team match (0-99, default 1)."
+        },
+        "pointsChampion": {
+          "type": "integer",
+          "description": "Points awarded to the champion's team when the bracket finishes (0-99, default 3)."
+        },
+        "createdAt": {
+          "type": "integer"
+        },
+        "updatedAt": {
+          "type": "integer"
+        }
+      },
+      "required": ["id", "name", "type", "eligibility", "session", "iconKey", "createdAt"]
+    },
+    "PlayerEntry": {
+      "title": "PlayerEntry",
+      "description": "A single sport registration slot for a player.",
+      "type": "object",
+      "properties": {
+        "slot": {
+          "type": "string",
+          "enum": ["morning", "afternoon", "secondary", "tertiary"]
+        },
+        "gameId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "selfLevel": {
+          "type": "integer"
+        },
+        "overrideLevel": {
+          "type": "integer"
+        }
+      },
+      "required": ["slot", "gameId", "selfLevel"]
+    },
+    "Player": {
+      "title": "Player",
+      "description": "A church fellowship participant with 0 to 3 game entries and optional team assignment.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "department": {
+          "type": "string",
+          "enum": ["Kids", "YP", "SP", "Adults"]
+        },
+        "gender": {
+          "type": "string",
+          "enum": ["M", "F"]
+        },
+        "entries": {
+          "type": "array",
+          "description": "0 to 4 game entries (morning, afternoon, secondary, tertiary)."
+        },
+        "team": {
+          "type": "string",
+          "description": "Assigned team ('blue' | 'red') or null when unassigned."
+        },
+        "isWalkIn": {
+          "type": "boolean"
+        },
+        "isDemo": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "integer"
+        },
+        "updatedAt": {
+          "type": "integer"
+        }
+      },
+      "required": ["id", "name", "department", "gender", "entries", "team", "isWalkIn", "isDemo", "createdAt"]
+    },
+    "Bracket": {
+      "title": "Bracket",
+      "description": "Match bracket and round state for a single game.",
+      "type": "object",
+      "properties": {
+        "format": {
+          "type": "string",
+          "enum": ["elimination", "roundrobin", "teammatch"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "complete"]
+        },
+        "matches": {
+          "type": "array",
+          "description": "List of match objects with player snapshots and results."
+        },
+        "championName": {
+          "type": "string",
+          "description": "Winning player or team name, or null while active."
+        },
+        "championTeam": {
+          "type": "string",
+          "description": "Winning team ('blue' | 'red') or null while active."
+        },
+        "division": {
+          "type": "integer",
+          "description": "Skill level division (1, 2, or 3) for division-based games, or null."
+        },
+        "createdAt": {
+          "type": "integer"
+        },
+        "updatedAt": {
+          "type": "integer"
+        }
+      },
+      "required": ["format", "status", "matches", "championName", "championTeam", "createdAt"]
+    },
+    "AppSettings": {
+      "title": "AppSettings",
+      "description": "Device-shared PIN hashes for Scorer and Admin roles.",
+      "type": "object",
+      "properties": {
+        "adminPinHash": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "scorerPinHash": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "initialized": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "integer"
+        },
+        "updatedAt": {
+          "type": "integer"
+        }
+      },
+      "required": ["adminPinHash", "scorerPinHash", "initialized", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/games/{gameId}": {
+      "schema": { "$ref": "#/entities/Game" },
+      "description": "Master list of sports and tabletop games."
+    },
+    "/players/{playerId}": {
+      "schema": { "$ref": "#/entities/Player" },
+      "description": "Registered participants and walk-ins."
+    },
+    "/brackets/{gameId}": {
+      "schema": { "$ref": "#/entities/Bracket" },
+      "description": "Match brackets and match outcomes keyed by game ID."
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/AppSettings" },
+      "description": "Global application settings (app document stores role PIN hashes)."
+    }
+  }
+}
