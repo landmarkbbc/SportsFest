@@ -1,5 +1,6 @@
 import {
   Bracket,
+  BracketBackup,
   BracketFormat,
   BracketMatch,
   BracketSlotSnapshot,
@@ -23,6 +24,13 @@ export class AlreadyDecidedError extends Error {
   constructor() {
     super('Already decided by another scorer');
     this.name = 'AlreadyDecidedError';
+  }
+}
+
+export class StaleBracketError extends Error {
+  constructor() {
+    super('Already updated, refresh');
+    this.name = 'StaleBracketError';
   }
 }
 
@@ -701,12 +709,40 @@ export function applyEliminationDrawUndo(
   };
 }
 
-export function canUndoMatch(bracket: Bracket, match: BracketMatch): boolean {
-  if (match.bye || match.winner === null) return false;
-  if (bracket.format === 'roundrobin') return true;
-  return !bracket.matches.some(
-    (other) => other.round > match.round && !other.bye && other.winner !== null
+export interface EliminationUndoImpact {
+  laterRounds: number[];
+  laterDecidedCount: number;
+}
+
+export function canUndoMatch(_bracket: Bracket, match: BracketMatch): boolean {
+  return !match.bye && match.winner !== null;
+}
+
+export function getEliminationUndoImpact(
+  bracket: Bracket,
+  matchId: string
+): EliminationUndoImpact {
+  if (bracket.format !== 'elimination') {
+    return { laterRounds: [], laterDecidedCount: 0 };
+  }
+  const target = bracket.matches.find((m) => m.id === matchId);
+  if (!target) {
+    return { laterRounds: [], laterDecidedCount: 0 };
+  }
+  const laterResults = bracket.matches.filter(
+    (m) => m.round > target.round && !m.bye && (m.winner !== null || (m.drawCount ?? 0) > 0)
   );
+  const laterRounds = Array.from(new Set(laterResults.map((m) => m.round))).sort((a, b) => a - b);
+  return {
+    laterRounds,
+    laterDecidedCount: laterResults.length,
+  };
+}
+
+export function countResettableResults(bracket: Bracket): number {
+  return bracket.matches.filter(
+    (m) => !m.bye && (m.winner !== null || (m.drawCount ?? 0) > 0)
+  ).length;
 }
 
 export function applyMatchUndo(
@@ -716,10 +752,10 @@ export function applyMatchUndo(
 ): Bracket {
   const target = bracket.matches.find((m) => m.id === matchId);
   if (!target) {
-    throw new Error('Match not found.');
+    throw new StaleBracketError();
   }
   if (!canUndoMatch(bracket, target)) {
-    throw new Error('Cannot undo because a match in a later round is already decided.');
+    throw new StaleBracketError();
   }
 
   const trimmed =
@@ -744,6 +780,70 @@ export function applyMatchUndo(
     matches: updatedMatches,
     championName: null,
     championTeam: null,
+    updatedAt: now,
+  };
+}
+
+export function applyResetScores(
+  bracket: Bracket,
+  actorRole: string,
+  now: number = Date.now()
+): Bracket {
+  if (countResettableResults(bracket) === 0) {
+    throw new StaleBracketError();
+  }
+
+  const backup: BracketBackup = {
+    at: now,
+    by: actorRole,
+    matches: bracket.matches,
+    status: bracket.status,
+    championName: bracket.championName,
+    championTeam: bracket.championTeam,
+  };
+
+  const baseMatches =
+    bracket.format === 'elimination'
+      ? bracket.matches.filter((m) => m.round === 1)
+      : bracket.matches;
+
+  const resetMatches = baseMatches.map((m) =>
+    m.bye
+      ? m
+      : {
+          ...m,
+          winner: null,
+          decidedBy: null,
+          decidedAt: null,
+          drawCount: 0,
+        }
+  );
+
+  return {
+    ...bracket,
+    status: 'active',
+    matches: resetMatches,
+    championName: null,
+    championTeam: null,
+    backup,
+    updatedAt: now,
+  };
+}
+
+export function applyRestoreBackup(
+  bracket: Bracket,
+  now: number = Date.now()
+): Bracket {
+  if (!bracket.backup) {
+    throw new StaleBracketError();
+  }
+  return {
+    ...bracket,
+    status: bracket.backup.status,
+    matches: bracket.backup.matches,
+    championName: bracket.backup.championName,
+    championTeam: bracket.backup.championTeam,
+    backup: null,
     updatedAt: now,
   };
 }

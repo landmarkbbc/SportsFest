@@ -166,6 +166,15 @@ export interface BracketMatch {
   drawCount?: number;
 }
 
+export interface BracketBackup {
+  at: number;
+  by: string;
+  matches: BracketMatch[];
+  status: BracketStatus;
+  championName: string | null;
+  championTeam: TeamId | null;
+}
+
 export interface Bracket {
   format: BracketFormat;
   status: BracketStatus;
@@ -173,6 +182,7 @@ export interface Bracket {
   championName: string | null;
   championTeam: TeamId | null;
   division?: SkillLevel | null;
+  backup?: BracketBackup | null;
   createdAt: number;
   updatedAt?: number;
 }

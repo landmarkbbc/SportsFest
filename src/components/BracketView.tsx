@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronUp,
+  History,
   Lock,
   RotateCcw,
   Trash2,
@@ -29,16 +30,21 @@ import {
   deleteBracket,
   pickBracketChampion,
   recordBracketDraw,
+  resetBracketScores,
+  restoreBracketBackup,
   undoBracketMatch,
   undoEliminationDraw,
 } from '../services/db';
 import {
   AlreadyDecidedError,
   DIVISION_LEVELS,
+  StaleBracketError,
   canUndoMatch,
   computeRoundRobinStandings,
+  countResettableResults,
   formatPoints,
   getBracketDocId,
+  getEliminationUndoImpact,
   getGamePairingMode,
   getGameParticipantsSummary,
   getRoundRobinTiedLeaders,
@@ -64,12 +70,21 @@ type PendingMatchDecision =
       matchId: string;
       side: 'a' | 'b';
       slot: BracketSlotSnapshot;
+      drawCount: number;
     }
   | {
       kind: 'draw';
       matchId: string;
       match: BracketMatch;
+      drawCount: number;
     };
+
+interface PendingUndoRequest {
+  matchId: string;
+  laterRounds: number[];
+  laterDecidedCount: number;
+  expectedVersion: number;
+}
 
 interface EliminationColumnItem {
   round: number;
@@ -95,6 +110,17 @@ function formatCreatedDate(timestamp: number): string {
       month: 'short',
       day: 'numeric',
       year: 'numeric',
+    });
+  } catch {
+    return '';
+  }
+}
+
+function formatBackupTime(timestamp: number): string {
+  try {
+    return new Date(timestamp).toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
     });
   } catch {
     return '';
@@ -200,7 +226,6 @@ function MatchCard({
   showLevel,
   allowsDraw,
   canScore,
-  isAdmin,
   canUndo,
   undoing,
   leadPlayerId,
@@ -214,11 +239,10 @@ function MatchCard({
   showLevel: boolean;
   allowsDraw: boolean;
   canScore: boolean;
-  isAdmin: boolean;
   canUndo: boolean;
   undoing: boolean;
   leadPlayerId?: string;
-  onPickWinner: (matchId: string, side: 'a' | 'b', slot: BracketSlotSnapshot) => void;
+  onPickWinner: (matchId: string, side: 'a' | 'b', slot: BracketSlotSnapshot, drawCount: number) => void;
   onPickDraw: (match: BracketMatch) => void;
   onUndo: (matchId: string) => void;
   onUndoDraw: (matchId: string) => void;
@@ -259,7 +283,7 @@ function MatchCard({
           {isLocked && (
             <Lock size={13} className="text-fg-muted shrink-0" aria-label="Match decided" />
           )}
-          {isAdmin && canUndo && (
+          {canScore && canUndo && (
             <button
               type="button"
               disabled={undoing}
@@ -270,7 +294,7 @@ function MatchCard({
               <span>{undoing ? 'Undoing...' : 'Undo'}</span>
             </button>
           )}
-          {isAdmin && !isLocked && drawCount > 0 && (
+          {canScore && !isLocked && drawCount > 0 && (
             <button
               type="button"
               disabled={undoing}
@@ -294,7 +318,7 @@ function MatchCard({
           canScore={canScore}
           onPick={() => {
             if (firstSlot && !isLocked && canScore) {
-              onPickWinner(match.id, firstSide, firstSlot);
+              onPickWinner(match.id, firstSide, firstSlot, drawCount);
             }
           }}
         />
@@ -307,7 +331,7 @@ function MatchCard({
           canScore={canScore}
           onPick={() => {
             if (secondSlot && !isLocked && canScore) {
-              onPickWinner(match.id, secondSide, secondSlot);
+              onPickWinner(match.id, secondSide, secondSlot, drawCount);
             }
           }}
         />
@@ -383,8 +407,23 @@ export function BracketView({
   const [pendingDecision, setPendingDecision] =
     useState<PendingMatchDecision | null>(null);
   const [confirmingDecision, setConfirmingDecision] = useState(false);
+  const [pendingUndo, setPendingUndo] = useState<PendingUndoRequest | null>(null);
   const [undoingMatchId, setUndoingMatchId] = useState<string | null>(null);
   const [pickingChampionId, setPickingChampionId] = useState<string | null>(null);
+
+  const [resetScoresConfirm, setResetScoresConfirm] = useState<{
+    count: number;
+    expectedVersion: number;
+  } | null>(null);
+  const [resetScoresCountdown, setResetScoresCountdown] = useState(0);
+  const [resettingScores, setResettingScores] = useState(false);
+
+  const [restoreBackupConfirm, setRestoreBackupConfirm] = useState<{
+    at: number;
+    by: string;
+    expectedVersion: number;
+  } | null>(null);
+  const [restoringBackup, setRestoringBackup] = useState(false);
 
   const [summaryCollapsed, setSummaryCollapsed] = useState(false);
   const [rrTab, setRrTab] = useState<'standings' | 'matchdays'>('standings');
@@ -415,14 +454,24 @@ export function BracketView({
   const prevHighestRoundRef = useRef<number>(0);
   const prevConfettiKeyRef = useRef<string>(bracketSessionKey);
   const prevConfettiStatusRef = useRef<Bracket['status'] | null>(bracket?.status ?? null);
+  const suppressNextConfettiRef = useRef(false);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const columnRefs = useRef<Record<number, HTMLDivElement | null>>({});
+
+  useEffect(() => {
+    if (!resetScoresConfirm || resetScoresCountdown <= 0) return;
+    const timer = window.setTimeout(() => {
+      setResetScoresCountdown((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [resetScoresConfirm, resetScoresCountdown]);
 
   useEffect(() => {
     const currentStatus = bracket?.status ?? null;
     if (prevConfettiKeyRef.current !== bracketSessionKey) {
       prevConfettiKeyRef.current = bracketSessionKey;
       prevConfettiStatusRef.current = currentStatus;
+      suppressNextConfettiRef.current = false;
       return;
     }
 
@@ -434,6 +483,10 @@ export function BracketView({
       currentStatus === 'complete' &&
       bracket?.championTeam
     ) {
+      if (suppressNextConfettiRef.current) {
+        suppressNextConfettiRef.current = false;
+        return;
+      }
       const prefersReduced =
         typeof window !== 'undefined' &&
         window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
@@ -450,6 +503,8 @@ export function BracketView({
         colors,
         disableForReducedMotion: true,
       });
+    } else if (currentStatus !== 'complete') {
+      suppressNextConfettiRef.current = false;
     }
   }, [bracketSessionKey, bracket?.status, bracket?.championTeam]);
 
@@ -556,7 +611,10 @@ export function BracketView({
       setViewedElimRound(activeRound);
       setAnimatedNewRound(null);
       setPendingDecision(null);
+      setPendingUndo(null);
       setResetConfirmOpen(false);
+      setResetScoresConfirm(null);
+      setRestoreBackupConfirm(null);
       if (bracket?.format === 'elimination' && activeRound > 1) {
         window.requestAnimationFrame(() => {
           scrollToEliminationRound(activeRound, true);
@@ -584,6 +642,22 @@ export function BracketView({
       return () => {
         window.cancelAnimationFrame(rafId);
         window.clearTimeout(timer);
+      };
+    }
+    if (
+      prevBracketKeyRef.current === bracketSessionKey &&
+      prevHighestRoundRef.current > 0 &&
+      highestRound > 0 &&
+      highestRound < prevHighestRoundRef.current
+    ) {
+      setAnimatedNewRound(null);
+      setViewedElimRound(highestRound);
+      const rafId = window.requestAnimationFrame(() => {
+        scrollToEliminationRound(highestRound);
+      });
+      prevHighestRoundRef.current = highestRound;
+      return () => {
+        window.cancelAnimationFrame(rafId);
       };
     }
     prevHighestRoundRef.current = highestRound;
@@ -990,26 +1064,35 @@ export function BracketView({
     0
   );
 
+  const resettableResultCount = countResettableResults(bracket);
+  const currentBracketVersion = bracket.updatedAt ?? bracket.createdAt;
+
   async function handleConfirmDecision() {
     if (!pendingDecision || confirmingDecision) return;
     setConfirmingDecision(true);
     try {
       const actor = role === 'admin' ? 'Admin' : 'Scorer';
       if (pendingDecision.kind === 'draw') {
-        await recordBracketDraw(bracketDocId, pendingDecision.matchId, actor);
+        await recordBracketDraw(bracketDocId, pendingDecision.matchId, actor, {
+          drawCount: pendingDecision.drawCount,
+        });
       } else {
         await decideBracketMatch(
           bracketDocId,
           pendingDecision.matchId,
           pendingDecision.side,
           actor,
-          pairingMode
+          pairingMode,
+          { drawCount: pendingDecision.drawCount }
         );
       }
       setPendingDecision(null);
     } catch (err) {
       if (err instanceof AlreadyDecidedError) {
         onShowToast('error', 'Already decided by another scorer');
+        setPendingDecision(null);
+      } else if (err instanceof StaleBracketError) {
+        onShowToast('error', 'Already updated, refresh');
         setPendingDecision(null);
       } else {
         onShowToast(
@@ -1022,35 +1105,134 @@ export function BracketView({
     }
   }
 
-  async function handleUndo(matchId: string) {
-    if (!isAdmin || undoingMatchId) return;
-    setUndoingMatchId(matchId);
+  function requestUndo(matchId: string) {
+    if (!canScore || undoingMatchId || !bracket) return;
+    const impact = getEliminationUndoImpact(bracket, matchId);
+    setPendingUndo({
+      matchId,
+      laterRounds: impact.laterRounds,
+      laterDecidedCount: impact.laterDecidedCount,
+      expectedVersion: currentBracketVersion,
+    });
+  }
+
+  async function handleConfirmUndo() {
+    if (!canScore || !pendingUndo || undoingMatchId) return;
+    setUndoingMatchId(pendingUndo.matchId);
     try {
-      await undoBracketMatch(bracketDocId, matchId);
+      await undoBracketMatch(
+        bracketDocId,
+        pendingUndo.matchId,
+        pendingUndo.expectedVersion
+      );
+      setPendingUndo(null);
       onShowToast('success', 'Match result undone.');
     } catch (err) {
-      onShowToast(
-        'error',
-        err instanceof Error ? err.message : 'Could not undo match.'
-      );
+      if (err instanceof StaleBracketError) {
+        setPendingUndo(null);
+        onShowToast('error', 'Already updated, refresh');
+      } else {
+        onShowToast(
+          'error',
+          err instanceof Error ? err.message : 'Could not undo match.'
+        );
+      }
     } finally {
       setUndoingMatchId(null);
     }
   }
 
   async function handleUndoDraw(matchId: string) {
-    if (!isAdmin || undoingMatchId) return;
+    if (!canScore || undoingMatchId) return;
     setUndoingMatchId(matchId);
     try {
-      await undoEliminationDraw(bracketDocId, matchId);
+      await undoEliminationDraw(bracketDocId, matchId, currentBracketVersion);
       onShowToast('success', 'Draw undone.');
     } catch (err) {
-      onShowToast(
-        'error',
-        err instanceof Error ? err.message : 'Could not undo draw.'
-      );
+      if (err instanceof StaleBracketError) {
+        onShowToast('error', 'Already updated, refresh');
+      } else {
+        onShowToast(
+          'error',
+          err instanceof Error ? err.message : 'Could not undo draw.'
+        );
+      }
     } finally {
       setUndoingMatchId(null);
+    }
+  }
+
+  function openResetScoresConfirm() {
+    if (!canScore || resettableResultCount === 0) return;
+    setResetScoresCountdown(3);
+    setResetScoresConfirm({
+      count: resettableResultCount,
+      expectedVersion: currentBracketVersion,
+    });
+  }
+
+  async function handleConfirmResetScores() {
+    if (!canScore || !resetScoresConfirm || resetScoresCountdown > 0 || resettingScores) {
+      return;
+    }
+    setResettingScores(true);
+    try {
+      const actor = role === 'admin' ? 'Admin' : 'Scorer';
+      await resetBracketScores(
+        bracketDocId,
+        actor,
+        resetScoresConfirm.expectedVersion
+      );
+      setResetScoresConfirm(null);
+      onShowToast('success', 'Scores reset');
+    } catch (err) {
+      if (err instanceof StaleBracketError) {
+        setResetScoresConfirm(null);
+        onShowToast('error', 'Already updated, refresh');
+      } else {
+        onShowToast(
+          'error',
+          err instanceof Error ? err.message : 'Failed to reset scores.'
+        );
+      }
+    } finally {
+      setResettingScores(false);
+    }
+  }
+
+  function openRestoreBackupConfirm() {
+    if (!isAdmin || !bracket?.backup) return;
+    setRestoreBackupConfirm({
+      at: bracket.backup.at,
+      by: bracket.backup.by,
+      expectedVersion: currentBracketVersion,
+    });
+  }
+
+  async function handleConfirmRestoreBackup() {
+    if (!isAdmin || !restoreBackupConfirm || restoringBackup) return;
+    setRestoringBackup(true);
+    suppressNextConfettiRef.current = true;
+    try {
+      await restoreBracketBackup(
+        bracketDocId,
+        restoreBackupConfirm.expectedVersion
+      );
+      setRestoreBackupConfirm(null);
+      onShowToast('success', 'Scores restored.');
+    } catch (err) {
+      suppressNextConfettiRef.current = false;
+      if (err instanceof StaleBracketError) {
+        setRestoreBackupConfirm(null);
+        onShowToast('error', 'Already updated, refresh');
+      } else {
+        onShowToast(
+          'error',
+          err instanceof Error ? err.message : 'Failed to restore scores.'
+        );
+      }
+    } finally {
+      setRestoringBackup(false);
     }
   }
 
@@ -1058,13 +1240,17 @@ export function BracketView({
     if (!isAdmin || pickingChampionId) return;
     setPickingChampionId(player.playerId);
     try {
-      await pickBracketChampion(bracketDocId, player);
+      await pickBracketChampion(bracketDocId, player, currentBracketVersion);
       onShowToast('success', `${player.name} named champion.`);
     } catch (err) {
-      onShowToast(
-        'error',
-        err instanceof Error ? err.message : 'Failed to pick champion.'
-      );
+      if (err instanceof StaleBracketError) {
+        onShowToast('error', 'Already updated, refresh');
+      } else {
+        onShowToast(
+          'error',
+          err instanceof Error ? err.message : 'Failed to pick champion.'
+        );
+      }
     } finally {
       setPickingChampionId(null);
     }
@@ -1114,7 +1300,7 @@ export function BracketView({
 
   const maxStandingsPts = standings[0]?.pts ?? 0;
 
-  // Confirm Winner / Draw & Reset Bracket Modals (shared across main view and Player Matches page)
+  // Confirm Winner / Draw, Undo, Reset Scores, Restore Backup & Reset Bracket Modals
   const sharedModals = (
     <>
       {pendingDecision && (
@@ -1187,6 +1373,164 @@ export function BracketView({
                 className="flex-1 min-h-[44px] px-4 py-2 rounded-xl bg-primary text-primary-fg text-sm font-medium hover:bg-primary-hover transition-colors duration-150 disabled:opacity-50"
               >
                 {confirmingDecision ? 'Saving...' : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingUndo && (
+        <div
+          className="fixed inset-0 z-50 bg-overlay flex items-end sm:items-center justify-center p-0 sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="undo-match-title"
+        >
+          <div className="bg-surface w-full sm:max-w-sm rounded-t-2xl sm:rounded-xl border border-edge p-6 shadow-xl space-y-5 pb-safe">
+            <div>
+              {pendingUndo.laterDecidedCount > 0 ? (
+                <>
+                  <h2
+                    id="undo-match-title"
+                    className="text-[16px] font-semibold text-fg"
+                  >
+                    Undo and clear later rounds?
+                  </h2>
+                  <p className="text-sm text-fg-muted mt-1">
+                    Undoing this also clears{' '}
+                    {pendingUndo.laterRounds.length === 1
+                      ? `Round ${pendingUndo.laterRounds[0]}`
+                      : `Rounds ${pendingUndo.laterRounds.join(', ')}`}{' '}
+                    ({pendingUndo.laterDecidedCount} decided{' '}
+                    {pendingUndo.laterDecidedCount === 1 ? 'match' : 'matches'}).
+                    Continue?
+                  </p>
+                </>
+              ) : (
+                <h2
+                  id="undo-match-title"
+                  className="text-[16px] font-semibold text-fg"
+                >
+                  Undo this result?
+                </h2>
+              )}
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                disabled={undoingMatchId !== null}
+                onClick={() => setPendingUndo(null)}
+                className="flex-1 min-h-[44px] px-4 py-2 rounded-xl border border-edge bg-transparent text-sm font-medium text-fg hover:bg-nested transition-colors duration-150 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              {pendingUndo.laterDecidedCount > 0 ? (
+                <button
+                  type="button"
+                  disabled={undoingMatchId !== null}
+                  onClick={() => void handleConfirmUndo()}
+                  className="flex-1 min-h-[44px] px-4 py-2 rounded-xl bg-red-tint border border-red-edge text-red-light text-sm font-medium hover:bg-red-team/25 transition-colors duration-150 disabled:opacity-50"
+                >
+                  {undoingMatchId ? 'Undoing...' : 'Undo and clear'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={undoingMatchId !== null}
+                  onClick={() => void handleConfirmUndo()}
+                  className="flex-1 min-h-[44px] px-4 py-2 rounded-xl bg-primary text-primary-fg text-sm font-medium hover:bg-primary-hover transition-colors duration-150 disabled:opacity-50"
+                >
+                  {undoingMatchId ? 'Undoing...' : 'Undo'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {resetScoresConfirm && (
+        <div
+          className="fixed inset-0 z-50 bg-overlay flex items-end sm:items-center justify-center p-0 sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="reset-scores-title"
+        >
+          <div className="bg-surface w-full sm:max-w-sm rounded-t-2xl sm:rounded-xl border border-edge p-6 shadow-xl space-y-5 pb-safe">
+            <div>
+              <h2
+                id="reset-scores-title"
+                className="text-[16px] font-semibold text-fg"
+              >
+                Reset scores?
+              </h2>
+              <p className="text-sm text-fg-muted mt-1">
+                Reset all scores for {summaryTitle}? {resetScoresConfirm.count}{' '}
+                {resetScoresConfirm.count === 1 ? 'result' : 'results'} will be
+                cleared. The bracket and pairings stay.
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                disabled={resettingScores}
+                onClick={() => setResetScoresConfirm(null)}
+                className="flex-1 min-h-[44px] px-4 py-2 rounded-xl border border-edge bg-transparent text-sm font-medium text-fg hover:bg-nested transition-colors duration-150 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={resetScoresCountdown > 0 || resettingScores}
+                onClick={() => void handleConfirmResetScores()}
+                className="flex-1 min-h-[44px] px-4 py-2 rounded-xl bg-red-tint border border-red-edge text-red-light text-sm font-medium hover:bg-red-team/25 transition-colors duration-150 disabled:opacity-50"
+              >
+                {resettingScores
+                  ? 'Resetting...'
+                  : resetScoresCountdown > 0
+                    ? `Reset (${resetScoresCountdown})`
+                    : 'Reset scores'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {restoreBackupConfirm && (
+        <div
+          className="fixed inset-0 z-50 bg-overlay flex items-end sm:items-center justify-center p-0 sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="restore-backup-title"
+        >
+          <div className="bg-surface w-full sm:max-w-sm rounded-t-2xl sm:rounded-xl border border-edge p-6 shadow-xl space-y-5 pb-safe">
+            <div>
+              <h2
+                id="restore-backup-title"
+                className="text-[16px] font-semibold text-fg"
+              >
+                Restore scores from {formatBackupTime(restoreBackupConfirm.at)} reset by{' '}
+                {restoreBackupConfirm.by}?
+              </h2>
+              <p className="text-sm text-fg-muted mt-1">
+                Anything decided after the reset will be replaced by the restored data.
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                disabled={restoringBackup}
+                onClick={() => setRestoreBackupConfirm(null)}
+                className="flex-1 min-h-[44px] px-4 py-2 rounded-xl border border-edge bg-transparent text-sm font-medium text-fg hover:bg-nested transition-colors duration-150 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={restoringBackup}
+                onClick={() => void handleConfirmRestoreBackup()}
+                className="flex-1 min-h-[44px] px-4 py-2 rounded-xl bg-primary text-primary-fg text-sm font-medium hover:bg-primary-hover transition-colors duration-150 disabled:opacity-50"
+              >
+                {restoringBackup ? 'Restoring...' : 'Restore scores'}
               </button>
             </div>
           </div>
@@ -1313,17 +1657,21 @@ export function BracketView({
                     showLevel={showLevelChip}
                     allowsDraw={allowsDraw}
                     canScore={canScore}
-                    isAdmin={isAdmin}
                     canUndo={canUndoMatch(bracket, match)}
                     undoing={undoingMatchId === match.id}
                     leadPlayerId={player.playerId}
-                    onPickWinner={(matchId, side, slot) =>
-                      setPendingDecision({ kind: 'winner', matchId, side, slot })
+                    onPickWinner={(matchId, side, slot, drawCount) =>
+                      setPendingDecision({ kind: 'winner', matchId, side, slot, drawCount })
                     }
                     onPickDraw={(m) =>
-                      setPendingDecision({ kind: 'draw', matchId: m.id, match: m })
+                      setPendingDecision({
+                        kind: 'draw',
+                        matchId: m.id,
+                        match: m,
+                        drawCount: m.drawCount ?? 0,
+                      })
                     }
-                    onUndo={(matchId) => void handleUndo(matchId)}
+                    onUndo={requestUndo}
                     onUndoDraw={(matchId) => void handleUndoDraw(matchId)}
                   />
                 ))}
@@ -1404,15 +1752,39 @@ export function BracketView({
                 </span>
               </div>
 
-              {isAdmin && (
-                <button
-                  type="button"
-                  onClick={() => setResetConfirmOpen(true)}
-                  className="min-h-[36px] px-3 py-1.5 rounded-full border border-edge bg-transparent hover:bg-red-tint text-xs font-medium text-red-light inline-flex items-center gap-1.5 transition-colors duration-150 shrink-0"
-                >
-                  <Trash2 size={14} />
-                  <span>Reset bracket</span>
-                </button>
+              {(canScore || isAdmin) && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  {canScore && resettableResultCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={openResetScoresConfirm}
+                      className="min-h-[36px] px-3 py-1.5 rounded-full border border-edge bg-transparent hover:bg-nested text-xs font-medium text-fg inline-flex items-center gap-1.5 transition-colors duration-150 shrink-0"
+                    >
+                      <RotateCcw size={14} />
+                      <span>Reset scores</span>
+                    </button>
+                  )}
+                  {isAdmin && bracket.backup && (
+                    <button
+                      type="button"
+                      onClick={openRestoreBackupConfirm}
+                      className="min-h-[36px] px-3 py-1.5 rounded-full border border-edge bg-transparent hover:bg-nested text-xs font-medium text-fg-muted hover:text-fg inline-flex items-center gap-1.5 transition-colors duration-150 shrink-0"
+                    >
+                      <History size={14} />
+                      <span>Restore last reset</span>
+                    </button>
+                  )}
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => setResetConfirmOpen(true)}
+                      className="min-h-[36px] px-3 py-1.5 rounded-full border border-edge bg-transparent hover:bg-red-tint text-xs font-medium text-red-light inline-flex items-center gap-1.5 transition-colors duration-150 shrink-0"
+                    >
+                      <Trash2 size={14} />
+                      <span>Reset bracket</span>
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           </div>
@@ -1672,16 +2044,20 @@ export function BracketView({
                           showLevel={showLevelChip}
                           allowsDraw={allowsDraw}
                           canScore={canScore}
-                          isAdmin={isAdmin}
                           canUndo={canUndoMatch(bracket, match)}
                           undoing={undoingMatchId === match.id}
-                          onPickWinner={(matchId, side, slot) =>
-                            setPendingDecision({ kind: 'winner', matchId, side, slot })
+                          onPickWinner={(matchId, side, slot, drawCount) =>
+                            setPendingDecision({ kind: 'winner', matchId, side, slot, drawCount })
                           }
                           onPickDraw={(m) =>
-                            setPendingDecision({ kind: 'draw', matchId: m.id, match: m })
+                            setPendingDecision({
+                              kind: 'draw',
+                              matchId: m.id,
+                              match: m,
+                              drawCount: m.drawCount ?? 0,
+                            })
                           }
-                          onUndo={(matchId) => void handleUndo(matchId)}
+                          onUndo={requestUndo}
                           onUndoDraw={(matchId) => void handleUndoDraw(matchId)}
                         />
                       ))}
@@ -1865,16 +2241,20 @@ export function BracketView({
                         showLevel={showLevelChip}
                         allowsDraw={allowsDraw}
                         canScore={canScore}
-                        isAdmin={isAdmin}
                         canUndo={canUndoMatch(bracket, match)}
                         undoing={undoingMatchId === match.id}
-                        onPickWinner={(matchId, side, slot) =>
-                          setPendingDecision({ kind: 'winner', matchId, side, slot })
+                        onPickWinner={(matchId, side, slot, drawCount) =>
+                          setPendingDecision({ kind: 'winner', matchId, side, slot, drawCount })
                         }
                         onPickDraw={(m) =>
-                          setPendingDecision({ kind: 'draw', matchId: m.id, match: m })
+                          setPendingDecision({
+                            kind: 'draw',
+                            matchId: m.id,
+                            match: m,
+                            drawCount: m.drawCount ?? 0,
+                          })
                         }
-                        onUndo={(matchId) => void handleUndo(matchId)}
+                        onUndo={requestUndo}
                         onUndoDraw={(matchId) => void handleUndoDraw(matchId)}
                       />
                     ))}
@@ -1899,16 +2279,20 @@ export function BracketView({
                   showLevel={game.usesSkillLevel}
                   allowsDraw={false}
                   canScore={canScore}
-                  isAdmin={isAdmin}
                   canUndo={canUndoMatch(bracket, match)}
                   undoing={undoingMatchId === match.id}
-                  onPickWinner={(matchId, side, slot) =>
-                    setPendingDecision({ kind: 'winner', matchId, side, slot })
+                  onPickWinner={(matchId, side, slot, drawCount) =>
+                    setPendingDecision({ kind: 'winner', matchId, side, slot, drawCount })
                   }
                   onPickDraw={(m) =>
-                    setPendingDecision({ kind: 'draw', matchId: m.id, match: m })
+                    setPendingDecision({
+                      kind: 'draw',
+                      matchId: m.id,
+                      match: m,
+                      drawCount: m.drawCount ?? 0,
+                    })
                   }
-                  onUndo={(matchId) => void handleUndo(matchId)}
+                  onUndo={requestUndo}
                   onUndoDraw={(matchId) => void handleUndoDraw(matchId)}
                 />
               ))}

@@ -39,10 +39,13 @@ import {
 import {
   AlreadyDecidedError,
   PairingMode,
+  StaleBracketError,
   applyEliminationDrawUndo,
   applyMatchDecision,
   applyMatchDraw,
   applyMatchUndo,
+  applyResetScores,
+  applyRestoreBackup,
   pickRoundRobinChampionState,
 } from '../utils/bracket';
 
@@ -789,16 +792,28 @@ export async function decideBracketMatch(
   matchId: string,
   side: 'a' | 'b',
   decidedBy: string,
-  pairingMode?: PairingMode
+  pairingMode?: PairingMode,
+  expected?: { drawCount?: number }
 ): Promise<Bracket> {
   const ref = doc(db, 'brackets', bracketDocId);
   try {
     return await runTransaction(db, async (tx) => {
       const snap = await tx.get(ref);
       if (!snap.exists()) {
-        throw new Error('Bracket no longer exists.');
+        throw new StaleBracketError();
       }
       const current = snap.data() as Bracket;
+      const target = current.matches.find((m) => m.id === matchId);
+      if (!target) {
+        throw new StaleBracketError();
+      }
+      if (
+        expected?.drawCount !== undefined &&
+        target.winner === null &&
+        (target.drawCount ?? 0) !== expected.drawCount
+      ) {
+        throw new StaleBracketError();
+      }
       const next = applyMatchDecision(current, matchId, side, decidedBy, Date.now(), pairingMode);
       tx.update(ref, {
         status: next.status,
@@ -810,7 +825,7 @@ export async function decideBracketMatch(
       return next;
     });
   } catch (error) {
-    if (error instanceof AlreadyDecidedError) {
+    if (error instanceof AlreadyDecidedError || error instanceof StaleBracketError) {
       throw error;
     }
     handleFirestoreError(error, OperationType.UPDATE, `brackets/${bracketDocId}`);
@@ -820,16 +835,28 @@ export async function decideBracketMatch(
 export async function recordBracketDraw(
   bracketDocId: string,
   matchId: string,
-  decidedBy: string
+  decidedBy: string,
+  expected?: { drawCount?: number }
 ): Promise<Bracket> {
   const ref = doc(db, 'brackets', bracketDocId);
   try {
     return await runTransaction(db, async (tx) => {
       const snap = await tx.get(ref);
       if (!snap.exists()) {
-        throw new Error('Bracket no longer exists.');
+        throw new StaleBracketError();
       }
       const current = snap.data() as Bracket;
+      const target = current.matches.find((m) => m.id === matchId);
+      if (!target) {
+        throw new StaleBracketError();
+      }
+      if (
+        expected?.drawCount !== undefined &&
+        target.winner === null &&
+        (target.drawCount ?? 0) !== expected.drawCount
+      ) {
+        throw new StaleBracketError();
+      }
       const next = applyMatchDraw(current, matchId, decidedBy, Date.now());
       tx.update(ref, {
         status: next.status,
@@ -841,7 +868,7 @@ export async function recordBracketDraw(
       return next;
     });
   } catch (error) {
-    if (error instanceof AlreadyDecidedError) {
+    if (error instanceof AlreadyDecidedError || error instanceof StaleBracketError) {
       throw error;
     }
     handleFirestoreError(error, OperationType.UPDATE, `brackets/${bracketDocId}`);
@@ -850,16 +877,23 @@ export async function recordBracketDraw(
 
 export async function undoEliminationDraw(
   bracketDocId: string,
-  matchId: string
+  matchId: string,
+  expectedVersion?: number
 ): Promise<Bracket> {
   const ref = doc(db, 'brackets', bracketDocId);
   try {
     return await runTransaction(db, async (tx) => {
       const snap = await tx.get(ref);
       if (!snap.exists()) {
-        throw new Error('Bracket no longer exists.');
+        throw new StaleBracketError();
       }
       const current = snap.data() as Bracket;
+      if (
+        expectedVersion !== undefined &&
+        (current.updatedAt ?? current.createdAt) !== expectedVersion
+      ) {
+        throw new StaleBracketError();
+      }
       const next = applyEliminationDrawUndo(current, matchId, Date.now());
       tx.update(ref, {
         matches: next.matches,
@@ -868,19 +902,32 @@ export async function undoEliminationDraw(
       return next;
     });
   } catch (error) {
+    if (error instanceof StaleBracketError) {
+      throw error;
+    }
     handleFirestoreError(error, OperationType.UPDATE, `brackets/${bracketDocId}`);
   }
 }
 
-export async function undoBracketMatch(gameId: string, matchId: string): Promise<Bracket> {
-  const ref = doc(db, 'brackets', gameId);
+export async function undoBracketMatch(
+  bracketDocId: string,
+  matchId: string,
+  expectedVersion?: number
+): Promise<Bracket> {
+  const ref = doc(db, 'brackets', bracketDocId);
   try {
     return await runTransaction(db, async (tx) => {
       const snap = await tx.get(ref);
       if (!snap.exists()) {
-        throw new Error('Bracket no longer exists.');
+        throw new StaleBracketError();
       }
       const current = snap.data() as Bracket;
+      if (
+        expectedVersion !== undefined &&
+        (current.updatedAt ?? current.createdAt) !== expectedVersion
+      ) {
+        throw new StaleBracketError();
+      }
       const next = applyMatchUndo(current, matchId, Date.now());
       tx.update(ref, {
         status: next.status,
@@ -892,25 +939,110 @@ export async function undoBracketMatch(gameId: string, matchId: string): Promise
       return next;
     });
   } catch (error) {
+    if (error instanceof StaleBracketError) {
+      throw error;
+    }
     if (error instanceof Error && error.message.includes('Cannot undo')) {
       throw error;
     }
-    handleFirestoreError(error, OperationType.UPDATE, `brackets/${gameId}`);
+    handleFirestoreError(error, OperationType.UPDATE, `brackets/${bracketDocId}`);
+  }
+}
+
+export async function resetBracketScores(
+  bracketDocId: string,
+  actorRole: string,
+  expectedVersion?: number
+): Promise<Bracket> {
+  const ref = doc(db, 'brackets', bracketDocId);
+  try {
+    return await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) {
+        throw new StaleBracketError();
+      }
+      const current = snap.data() as Bracket;
+      if (
+        expectedVersion !== undefined &&
+        (current.updatedAt ?? current.createdAt) !== expectedVersion
+      ) {
+        throw new StaleBracketError();
+      }
+      const next = applyResetScores(current, actorRole, Date.now());
+      tx.update(ref, {
+        status: next.status,
+        matches: next.matches,
+        championName: next.championName,
+        championTeam: next.championTeam,
+        backup: next.backup,
+        updatedAt: next.updatedAt,
+      });
+      return next;
+    });
+  } catch (error) {
+    if (error instanceof StaleBracketError) {
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.UPDATE, `brackets/${bracketDocId}`);
+  }
+}
+
+export async function restoreBracketBackup(
+  bracketDocId: string,
+  expectedVersion?: number
+): Promise<Bracket> {
+  const ref = doc(db, 'brackets', bracketDocId);
+  try {
+    return await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) {
+        throw new StaleBracketError();
+      }
+      const current = snap.data() as Bracket;
+      if (
+        expectedVersion !== undefined &&
+        (current.updatedAt ?? current.createdAt) !== expectedVersion
+      ) {
+        throw new StaleBracketError();
+      }
+      const next = applyRestoreBackup(current, Date.now());
+      tx.update(ref, {
+        status: next.status,
+        matches: next.matches,
+        championName: next.championName,
+        championTeam: next.championTeam,
+        backup: null,
+        updatedAt: next.updatedAt,
+      });
+      return next;
+    });
+  } catch (error) {
+    if (error instanceof StaleBracketError) {
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.UPDATE, `brackets/${bracketDocId}`);
   }
 }
 
 export async function pickBracketChampion(
   gameId: string,
-  winner: BracketSlotSnapshot
+  winner: BracketSlotSnapshot,
+  expectedVersion?: number
 ): Promise<void> {
   const ref = doc(db, 'brackets', gameId);
   try {
     await runTransaction(db, async (tx) => {
       const snap = await tx.get(ref);
       if (!snap.exists()) {
-        throw new Error('Bracket no longer exists.');
+        throw new StaleBracketError();
       }
       const current = snap.data() as Bracket;
+      if (
+        expectedVersion !== undefined &&
+        (current.updatedAt ?? current.createdAt) !== expectedVersion
+      ) {
+        throw new StaleBracketError();
+      }
       const next = pickRoundRobinChampionState(current, winner, Date.now());
       tx.update(ref, {
         status: next.status,
@@ -920,6 +1052,9 @@ export async function pickBracketChampion(
       });
     });
   } catch (error) {
+    if (error instanceof StaleBracketError) {
+      throw error;
+    }
     handleFirestoreError(error, OperationType.UPDATE, `brackets/${gameId}`);
   }
 }

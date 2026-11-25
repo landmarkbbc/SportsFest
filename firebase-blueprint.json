@@ -170,6 +170,10 @@
           "type": "integer",
           "description": "Skill level division (1, 2, or 3) for division-based games, or null."
         },
+        "backup": {
+          "type": "object",
+          "description": "Most recent score-reset snapshot (at, by, matches, status, championName, championTeam) for Admin restore."
+        },
         "createdAt": {
           "type": "integer"
         },
