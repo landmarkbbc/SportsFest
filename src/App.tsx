@@ -18,6 +18,7 @@ import {
   Department,
   EventProgram,
   Game,
+  GamePairs,
   Gender,
   Player,
   PlayerEntry,
@@ -37,6 +38,7 @@ import {
   saveInitialPins,
   saveProgram,
   subscribeGames,
+  subscribePairs,
   subscribePlayers,
   subscribeProgram,
   subscribeSettings,
@@ -127,6 +129,9 @@ export default function App() {
   // Firestore real-time state
   const [games, setGames] = useState<Game[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
+  const [pairsByGameId, setPairsByGameId] = useState<Map<string, GamePairs>>(
+    () => new Map()
+  );
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [program, setProgram] = useState<EventProgram | null>(null);
   const [programOpen, setProgramOpen] = useState(false);
@@ -280,11 +285,21 @@ export default function App() {
       }
     );
 
+    const unsubPairs = subscribePairs(
+      (data) => {
+        setPairsByGameId(data);
+      },
+      (err) => {
+        showToast('error', `Pairs sync error: ${err.message}`);
+      }
+    );
+
     return () => {
       unsubGames();
       unsubPlayers();
       unsubSettings();
       unsubProgram();
+      unsubPairs();
     };
   }, [authReady, showToast]);
 
@@ -664,6 +679,7 @@ export default function App() {
                 game={activeSport}
                 players={players}
                 bracketsByGameId={bracketsByGameId}
+                pairsByGameId={pairsByGameId}
                 role={role}
                 onBack={() => setSelectedSport(null)}
                 onShowToast={showToast}

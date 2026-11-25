@@ -19,6 +19,7 @@ import {
   BracketMatch,
   BracketSlotSnapshot,
   Game,
+  GamePairs,
   Player,
   Role,
   SkillLevel,
@@ -43,12 +44,15 @@ import {
   getRoundRobinTiedLeaders,
   getTeamMinPlayersError,
 } from '../utils/bracket';
+import { hasPairsRosterChanged } from '../utils/pairs';
 import { CreateBracketModal } from './CreateBracketModal';
+import { MakePairsModal } from './MakePairsModal';
 
 interface BracketViewProps {
   game: Game;
   players: Player[];
   bracket: Bracket | null;
+  gamePairs?: GamePairs | null;
   division?: SkillLevel | null;
   role: Role;
   onShowToast: (type: 'success' | 'error', text: string) => void;
@@ -365,11 +369,14 @@ export function BracketView({
   game,
   players,
   bracket,
+  gamePairs = null,
   division = null,
   role,
   onShowToast,
 }: BracketViewProps) {
   const [createOpen, setCreateOpen] = useState(false);
+  const [makePairsOpen, setMakePairsOpen] = useState(false);
+  const [remakeConfirmOpen, setRemakeConfirmOpen] = useState(false);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
 
@@ -610,29 +617,173 @@ export function BracketView({
 
   const canScore = role === 'admin' || role === 'scorer';
   const isAdmin = role === 'admin';
-  const allowsDraw = Boolean(game.allowsDraw) && bracket?.format !== 'teammatch';
+  const isPairsGame = game.type === 'pairs';
+  const showLevelChip = game.usesSkillLevel || isPairsGame;
+  const allowsDraw =
+    Boolean(game.allowsDraw) && !isPairsGame && bracket?.format !== 'teammatch';
+
+  const rosterChanged = useMemo(
+    () =>
+      isPairsGame && gamePairs
+        ? hasPairsRosterChanged(gamePairs, game.id, players)
+        : false,
+    [isPairsGame, gamePairs, game.id, players]
+  );
+
+  const pairsSection =
+    isPairsGame && gamePairs ? (
+      <section className="bg-surface border border-edge rounded-xl p-4 space-y-3">
+        <div className="flex items-start justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap min-w-0">
+            <h3 className="text-sm font-semibold text-fg">
+              Pairs ({gamePairs.pairs.length})
+            </h3>
+            {rosterChanged && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-status-amber-bg border border-status-amber-edge text-status-amber-fg">
+                <AlertTriangle size={12} className="shrink-0" />
+                <span>Roster changed - re-make pairs</span>
+              </span>
+            )}
+          </div>
+          {isAdmin &&
+            (!bracket ? (
+              <button
+                type="button"
+                onClick={() => setRemakeConfirmOpen(true)}
+                className="min-h-[36px] px-3 py-1 rounded-xl border border-edge bg-transparent hover:bg-nested text-xs font-medium text-fg transition-colors duration-150 shrink-0"
+              >
+                Re-make pairs
+              </button>
+            ) : (
+              <span className="text-xs text-fg-muted">
+                Reset the bracket first to change pairs
+              </span>
+            ))}
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {(['blue', 'red'] as const).map((team) => {
+            const isBlue = team === 'blue';
+            const teamPairs = gamePairs.pairs.filter((p) => p.team === team);
+            const teamUnpaired = gamePairs.unpaired.filter((u) => u.team === team);
+            return (
+              <div
+                key={team}
+                className="rounded-xl border border-edge bg-nested p-3 space-y-2"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className={`w-2 h-2 rounded-full ${
+                        isBlue ? 'bg-blue-team' : 'bg-red-team'
+                      }`}
+                      aria-hidden="true"
+                    />
+                    <span
+                      className={`text-xs font-semibold ${
+                        isBlue ? 'text-blue-light' : 'text-red-light'
+                      }`}
+                    >
+                      {isBlue ? 'Blue' : 'Red'}
+                    </span>
+                  </div>
+                  <span className="text-xs text-fg-muted tabular-nums">
+                    {teamPairs.length} {teamPairs.length === 1 ? 'pair' : 'pairs'}
+                  </span>
+                </div>
+
+                <ul className="space-y-1.5">
+                  {teamPairs.map((pair) => (
+                    <li
+                      key={pair.id}
+                      className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-surface border border-edge"
+                    >
+                      <span className="text-xs font-medium text-fg break-words leading-snug min-w-0 flex-1">
+                        {pair.members[0].name} &amp; {pair.members[1].name}
+                      </span>
+                      <span
+                        title={`Combined level ${pair.combined}`}
+                        className="px-1.5 py-0.5 rounded bg-nested border border-edge text-[11px] font-medium text-fg tabular-nums shrink-0"
+                      >
+                        L{pair.combined}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+
+                {teamUnpaired.length > 0 && (
+                  <p className="text-[11px] text-fg-muted leading-snug break-words">
+                    No partner: {teamUnpaired.map((u) => u.name).join(', ')}
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    ) : null;
+
+  const pairsModals = isPairsGame ? (
+    <>
+      <MakePairsModal
+        open={makePairsOpen}
+        game={game}
+        players={players}
+        onClose={() => setMakePairsOpen(false)}
+        onShowToast={onShowToast}
+      />
+
+      {remakeConfirmOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-overlay flex items-end sm:items-center justify-center p-0 sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="remake-pairs-title"
+        >
+          <div className="bg-surface w-full sm:max-w-sm rounded-t-2xl sm:rounded-xl border border-edge p-6 shadow-xl space-y-5 pb-safe">
+            <div>
+              <h2
+                id="remake-pairs-title"
+                className="text-[16px] font-semibold text-fg"
+              >
+                Re-make pairs?
+              </h2>
+              <p className="text-sm text-fg-muted mt-1">
+                Regenerate Blue and Red pairs for {game.name}. Existing pairs will be
+                replaced when you confirm.
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setRemakeConfirmOpen(false)}
+                className="flex-1 min-h-[44px] px-4 py-2 rounded-xl border border-edge bg-transparent text-sm font-medium text-fg hover:bg-nested transition-colors duration-150"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setRemakeConfirmOpen(false);
+                  setMakePairsOpen(true);
+                }}
+                className="flex-1 min-h-[44px] px-4 py-2 rounded-xl bg-primary text-primary-fg text-sm font-medium hover:bg-primary-hover transition-colors duration-150"
+              >
+                Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  ) : null;
 
   // Empty states when no bracket exists
   if (!bracket) {
-    if (game.type === 'pairs') {
+    if (isPairsGame && !gamePairs) {
       return (
-        <div className="bg-surface border border-edge rounded-xl p-6 text-center">
-          <p className="text-sm font-medium text-fg">
-            Pairs brackets coming soon
-          </p>
-          <p className="text-xs text-fg-muted mt-1">
-            Match brackets for pairs games are not available yet.
-          </p>
-        </div>
-      );
-    }
-
-    const createBlockedByMin = Boolean(minPlayersError);
-
-    return (
-      <>
-        <div className="bg-surface border border-edge rounded-xl p-5 text-center space-y-4">
-          {divisionMeta && (
+        <>
+          <div className="bg-surface border border-edge rounded-xl p-5 text-center space-y-4">
             <div className="grid grid-cols-2 gap-3 text-left">
               <div className="p-3 rounded-xl border border-blue-edge bg-blue-tint">
                 <div className="flex items-center gap-1.5">
@@ -659,46 +810,113 @@ export function BracketView({
                 </p>
               </div>
             </div>
-          )}
 
-          <div>
-            <p className="text-sm font-semibold text-fg">
-              {divisionMeta ? `No ${divisionMeta.label} bracket yet` : 'No bracket yet'}
-            </p>
-            <p className="text-xs text-fg-muted mt-1">
-              {isAdmin
-                ? 'Create a match bracket from assigned Blue and Red players.'
-                : 'Waiting for an Admin to create the bracket.'}
-            </p>
+            <div>
+              <p className="text-sm font-semibold text-fg">No pairs yet</p>
+              <p className="text-xs text-fg-muted mt-1">
+                {isAdmin
+                  ? 'Pair up assigned Blue and Red players before creating a bracket.'
+                  : 'Waiting for an Admin to make pairs.'}
+              </p>
+            </div>
+
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => setMakePairsOpen(true)}
+                className="min-h-[44px] px-5 py-2.5 rounded-xl bg-primary text-primary-fg text-sm font-medium hover:bg-primary-hover transition-colors duration-150 inline-flex items-center justify-center"
+              >
+                Make pairs
+              </button>
+            )}
           </div>
 
-          {minPlayersError && (
-            <div className="flex items-start gap-2 p-3 rounded-xl border border-status-amber-edge bg-status-amber-bg text-status-amber-fg text-left">
-              <AlertTriangle size={18} className="shrink-0 mt-0.5" />
-              <p className="text-xs font-medium leading-relaxed">{minPlayersError}</p>
-            </div>
-          )}
+          {pairsModals}
+        </>
+      );
+    }
 
-          {isAdmin && (
-            <button
-              type="button"
-              disabled={createBlockedByMin}
-              onClick={() => setCreateOpen(true)}
-              className="min-h-[44px] px-5 py-2.5 rounded-xl bg-primary text-primary-fg text-sm font-medium hover:bg-primary-hover transition-colors duration-150 inline-flex items-center justify-center disabled:opacity-45 disabled:cursor-not-allowed"
-            >
-              Create bracket
-            </button>
-          )}
+    const createBlockedByMin = Boolean(minPlayersError);
+
+    return (
+      <>
+        <div className="space-y-4">
+          {pairsSection}
+
+          <div className="bg-surface border border-edge rounded-xl p-5 text-center space-y-4">
+            {divisionMeta && (
+              <div className="grid grid-cols-2 gap-3 text-left">
+                <div className="p-3 rounded-xl border border-blue-edge bg-blue-tint">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-blue-team" aria-hidden="true" />
+                    <span className="text-xs font-semibold text-blue-light">Blue</span>
+                  </div>
+                  <p className="text-base font-semibold text-fg tabular-nums mt-0.5">
+                    {summary.blue.length}{' '}
+                    <span className="text-xs font-normal text-fg-muted">
+                      {summary.blue.length === 1 ? 'player' : 'players'}
+                    </span>
+                  </p>
+                </div>
+                <div className="p-3 rounded-xl border border-red-edge bg-red-tint">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-red-team" aria-hidden="true" />
+                    <span className="text-xs font-semibold text-red-light">Red</span>
+                  </div>
+                  <p className="text-base font-semibold text-fg tabular-nums mt-0.5">
+                    {summary.red.length}{' '}
+                    <span className="text-xs font-normal text-fg-muted">
+                      {summary.red.length === 1 ? 'player' : 'players'}
+                    </span>
+                  </p>
+                </div>
+              </div>
+            )}
+
+            <div>
+              <p className="text-sm font-semibold text-fg">
+                {divisionMeta ? `No ${divisionMeta.label} bracket yet` : 'No bracket yet'}
+              </p>
+              <p className="text-xs text-fg-muted mt-1">
+                {isAdmin
+                  ? isPairsGame
+                    ? 'Create a match bracket from the confirmed Blue and Red pairs.'
+                    : 'Create a match bracket from assigned Blue and Red players.'
+                  : 'Waiting for an Admin to create the bracket.'}
+              </p>
+            </div>
+
+            {minPlayersError && (
+              <div className="flex items-start gap-2 p-3 rounded-xl border border-status-amber-edge bg-status-amber-bg text-status-amber-fg text-left">
+                <AlertTriangle size={18} className="shrink-0 mt-0.5" />
+                <p className="text-xs font-medium leading-relaxed">{minPlayersError}</p>
+              </div>
+            )}
+
+            {isAdmin && (
+              <button
+                type="button"
+                disabled={createBlockedByMin}
+                onClick={() => setCreateOpen(true)}
+                className="min-h-[44px] px-5 py-2.5 rounded-xl bg-primary text-primary-fg text-sm font-medium hover:bg-primary-hover transition-colors duration-150 inline-flex items-center justify-center disabled:opacity-45 disabled:cursor-not-allowed"
+              >
+                Create bracket
+              </button>
+            )}
+          </div>
         </div>
 
         <CreateBracketModal
           open={createOpen}
           game={game}
           players={players}
+          gamePairs={gamePairs}
           division={activeDivision}
           onClose={() => setCreateOpen(false)}
           onShowToast={onShowToast}
         />
+
+        {pairsModals}
       </>
     );
   }
@@ -935,7 +1153,7 @@ export function BracketView({
                     <span className="text-xs text-fg-muted">
                       {pendingDecision.slot.team === 'blue' ? 'Blue Team' : 'Red Team'}
                       {pendingDecision.slot.dept ? ` · ${pendingDecision.slot.dept}` : ''}
-                      {game.usesSkillLevel && pendingDecision.slot.level !== null
+                      {showLevelChip && pendingDecision.slot.level !== null
                         ? ` · L${pendingDecision.slot.level}`
                         : ''}
                     </span>
@@ -1074,7 +1292,7 @@ export function BracketView({
               {formatPoints(pts)} pts
             </p>
             <p className="text-[11px] font-medium text-fg-muted tabular-nums mt-0.5">
-              {wins}-{draws}-{losses}
+              {allowsDraw ? `${wins}-${draws}-${losses}` : `${wins}-${losses}`}
             </p>
           </div>
         </div>
@@ -1092,7 +1310,7 @@ export function BracketView({
                     key={match.id}
                     match={match}
                     matchNumber={roundRobinMatchNumberById.get(match.id) ?? 1}
-                    showLevel={game.usesSkillLevel}
+                    showLevel={showLevelChip}
                     allowsDraw={allowsDraw}
                     canScore={canScore}
                     isAdmin={isAdmin}
@@ -1121,6 +1339,8 @@ export function BracketView({
 
   return (
     <div className="space-y-4">
+      {pairsSection}
+
       {/* 1. Collapsible Summary Card */}
       <section className="bg-surface border border-edge rounded-xl p-4">
         <button
@@ -1171,8 +1391,15 @@ export function BracketView({
               <div className="flex items-center gap-2 text-xs font-medium text-fg min-w-0">
                 <Users size={15} className="text-fg-muted shrink-0" />
                 <span className="tabular-nums">
-                  {summaryPlayerCount} {summaryPlayerCount === 1 ? 'player' : 'players'} -{' '}
-                  {summaryMatchCount} {summaryMatchCount === 1 ? 'match' : 'matches'} -{' '}
+                  {summaryPlayerCount}{' '}
+                  {isPairsGame && bracket.format !== 'teammatch'
+                    ? summaryPlayerCount === 1
+                      ? 'pair'
+                      : 'pairs'
+                    : summaryPlayerCount === 1
+                      ? 'player'
+                      : 'players'}{' '}
+                  - {summaryMatchCount} {summaryMatchCount === 1 ? 'match' : 'matches'} -{' '}
                   {summaryFormatLabel}
                 </span>
               </div>
@@ -1269,7 +1496,7 @@ export function BracketView({
                       }`}
                       aria-hidden="true"
                     />
-                    <span className="text-sm font-medium text-fg truncate">
+                    <span className="text-sm font-medium text-fg break-words">
                       {player.name}
                     </span>
                   </div>
@@ -1288,7 +1515,7 @@ export function BracketView({
                     }`}
                     aria-hidden="true"
                   />
-                  <span className="text-sm font-medium text-fg truncate">
+                  <span className="text-sm font-medium text-fg break-words">
                     {player.name}
                   </span>
                 </div>
@@ -1442,7 +1669,7 @@ export function BracketView({
                           key={match.id}
                           match={match}
                           matchNumber={idx + 1}
-                          showLevel={game.usesSkillLevel}
+                          showLevel={showLevelChip}
                           allowsDraw={allowsDraw}
                           canScore={canScore}
                           isAdmin={isAdmin}
@@ -1526,9 +1753,11 @@ export function BracketView({
                       <th className="sticky top-14 z-10 bg-surface border-b border-edge py-2.5 px-1.5 text-right w-8">
                         W
                       </th>
-                      <th className="sticky top-14 z-10 bg-surface border-b border-edge py-2.5 px-1.5 text-right w-8">
-                        D
-                      </th>
+                      {allowsDraw && (
+                        <th className="sticky top-14 z-10 bg-surface border-b border-edge py-2.5 px-1.5 text-right w-8">
+                          D
+                        </th>
+                      )}
                       <th className="sticky top-14 z-10 bg-surface border-b border-edge py-2.5 px-1.5 text-right w-8">
                         L
                       </th>
@@ -1602,9 +1831,11 @@ export function BracketView({
                           <td className="py-3 px-1.5 text-right text-fg tabular-nums">
                             {row.wins}
                           </td>
-                          <td className="py-3 px-1.5 text-right text-fg-muted tabular-nums">
-                            {row.draws}
-                          </td>
+                          {allowsDraw && (
+                            <td className="py-3 px-1.5 text-right text-fg-muted tabular-nums">
+                              {row.draws}
+                            </td>
+                          )}
                           <td className="py-3 px-1.5 text-right text-fg-muted tabular-nums">
                             {row.losses}
                           </td>
@@ -1631,7 +1862,7 @@ export function BracketView({
                         key={match.id}
                         match={match}
                         matchNumber={roundRobinMatchNumberById.get(match.id) ?? 1}
-                        showLevel={game.usesSkillLevel}
+                        showLevel={showLevelChip}
                         allowsDraw={allowsDraw}
                         canScore={canScore}
                         isAdmin={isAdmin}
@@ -1687,6 +1918,7 @@ export function BracketView({
       )}
 
       {sharedModals}
+      {pairsModals}
     </div>
   );
 }

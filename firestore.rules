@@ -97,10 +97,10 @@ service cloud.firestore {
         && isValidId(snap.playerId)
         && snap.name is string
         && snap.name.size() >= 1
-        && snap.name.size() <= 100
+        && snap.name.size() <= 210
         && snap.team in ['blue', 'red']
-        && (snap.dept == null || snap.dept in ['Kids', 'YP', 'SP', 'Adults'])
-        && (snap.level == null || (snap.level is int && snap.level >= 1 && snap.level <= 3));
+        && (snap.dept == null || snap.dept == '' || snap.dept in ['Kids', 'YP', 'SP', 'Adults'])
+        && (snap.level == null || (snap.level is int && snap.level >= 1 && snap.level <= 6));
     }
 
     function isValidBracketMatch(item) {
@@ -130,12 +130,66 @@ service cloud.firestore {
         && data.matches.size() >= 1
         && data.matches.size() <= 500
         && isValidBracketMatch(data.matches[0])
-        && (data.championName == null || (data.championName is string && data.championName.size() >= 1 && data.championName.size() <= 100))
+        && (data.championName == null || (data.championName is string && data.championName.size() >= 1 && data.championName.size() <= 210))
         && (data.championTeam == null || data.championTeam in ['blue', 'red'])
         && (!('division' in data) || data.division == null || (data.division is int && data.division >= 1 && data.division <= 3))
         && data.createdAt is int
         && data.createdAt > 0
         && (!('updatedAt' in data) || (data.updatedAt is int && data.updatedAt > 0));
+    }
+
+    // Pairs schema validation (pairs/{gameId})
+    function isValidPairMember(member) {
+      return member is map
+        && member.keys().hasAll(['playerId', 'name', 'level', 'dept'])
+        && member.keys().hasOnly(['playerId', 'name', 'level', 'dept'])
+        && isValidId(member.playerId)
+        && member.name is string
+        && member.name.size() >= 1
+        && member.name.size() <= 100
+        && member.level is int
+        && member.level >= 1
+        && member.level <= 3
+        && member.dept in ['Kids', 'YP', 'SP', 'Adults'];
+    }
+
+    function isValidPairItem(pair) {
+      return pair is map
+        && pair.keys().hasAll(['id', 'team', 'members', 'combined'])
+        && pair.keys().hasOnly(['id', 'team', 'members', 'combined'])
+        && isValidId(pair.id)
+        && pair.team in ['blue', 'red']
+        && pair.members is list
+        && pair.members.size() == 2
+        && isValidPairMember(pair.members[0])
+        && isValidPairMember(pair.members[1])
+        && pair.combined is int
+        && pair.combined >= 2
+        && pair.combined <= 6;
+    }
+
+    function isValidUnpairedPlayer(item) {
+      return item is map
+        && item.keys().hasAll(['playerId', 'name', 'team'])
+        && item.keys().hasOnly(['playerId', 'name', 'team'])
+        && isValidId(item.playerId)
+        && item.name is string
+        && item.name.size() >= 1
+        && item.name.size() <= 100
+        && item.team in ['blue', 'red'];
+    }
+
+    function isValidGamePairs(data) {
+      return data.keys().hasAll(['pairs', 'unpaired'])
+        && data.keys().hasOnly(['pairs', 'unpaired'])
+        && data.pairs is list
+        && data.pairs.size() >= 2
+        && data.pairs.size() <= 200
+        && isValidPairItem(data.pairs[0])
+        && data.unpaired is list
+        && data.unpaired.size() >= 0
+        && data.unpaired.size() <= 100
+        && (data.unpaired.size() == 0 || isValidUnpairedPlayer(data.unpaired[0]));
     }
 
     // Settings schema validation
@@ -222,6 +276,17 @@ service cloud.firestore {
           incoming().diff(existing()).affectedKeys().hasOnly(['entries', 'updatedAt'])
         );
       allow delete: if isSignedIn() && isValidId(playerId);
+    }
+
+    match /pairs/{gameId} {
+      allow get: if isSignedIn() && isValidId(gameId);
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(gameId) && isValidGamePairs(incoming());
+      allow update: if isSignedIn()
+        && isValidId(gameId)
+        && isValidGamePairs(incoming())
+        && incoming().diff(existing()).affectedKeys().hasOnly(['pairs', 'unpaired']);
+      allow delete: if isSignedIn() && isValidId(gameId);
     }
 
     match /brackets/{gameId} {

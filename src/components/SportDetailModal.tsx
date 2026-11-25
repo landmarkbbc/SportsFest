@@ -7,6 +7,8 @@ import {
   GAME_SESSION_LABELS,
   GAME_TYPE_LABELS,
   Game,
+  GamePair,
+  GamePairs,
   Player,
   PlayerEntry,
   Role,
@@ -31,6 +33,7 @@ interface SportDetailViewProps {
   game: Game;
   players: Player[];
   bracketsByGameId: Map<string, Bracket>;
+  pairsByGameId: Map<string, GamePairs>;
   role: Role;
   onBack: () => void;
   onShowToast: (type: 'success' | 'error', text: string) => void;
@@ -73,10 +76,29 @@ function PlayerListRow({
   );
 }
 
+function PairListRow({ pair }: { pair: GamePair }) {
+  return (
+    <li className="flex items-start justify-between gap-2 py-2 border-b border-edge last:border-b-0">
+      <div className="min-w-0 flex-1">
+        <span className="text-sm font-medium text-fg leading-snug break-words">
+          {pair.members[0].name} &amp; {pair.members[1].name}
+        </span>
+      </div>
+      <span
+        title={`Combined level ${pair.combined}`}
+        className="px-1.5 py-0.5 rounded-md bg-nested border border-edge text-xs font-medium text-fg tabular-nums shrink-0"
+      >
+        L{pair.combined}
+      </span>
+    </li>
+  );
+}
+
 export function SportDetailView({
   game,
   players,
   bracketsByGameId,
+  pairsByGameId,
   role,
   onBack,
   onShowToast,
@@ -147,6 +169,38 @@ export function SportDetailView({
   const activeBracket = game.hasDivisions
     ? bracketsByGameId.get(getBracketDocId(game.id, activeDivision)) ?? null
     : bracketsByGameId.get(game.id) ?? null;
+
+  const gamePairs =
+    game.type === 'pairs' ? pairsByGameId.get(game.id) ?? null : null;
+
+  const pairedPlayerIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (!gamePairs) return ids;
+    for (const pair of gamePairs.pairs) {
+      ids.add(pair.members[0].playerId);
+      ids.add(pair.members[1].playerId);
+    }
+    return ids;
+  }, [gamePairs]);
+
+  const bluePairs = useMemo(
+    () => (gamePairs ? gamePairs.pairs.filter((p) => p.team === 'blue') : []),
+    [gamePairs]
+  );
+  const redPairs = useMemo(
+    () => (gamePairs ? gamePairs.pairs.filter((p) => p.team === 'red') : []),
+    [gamePairs]
+  );
+  const bluePartnerless = useMemo(
+    () =>
+      gamePairs ? blueGroup.filter((item) => !pairedPlayerIds.has(item.player.id)) : [],
+    [gamePairs, blueGroup, pairedPlayerIds]
+  );
+  const redPartnerless = useMemo(
+    () =>
+      gamePairs ? redGroup.filter((item) => !pairedPlayerIds.has(item.player.id)) : [],
+    [gamePairs, redGroup, pairedPlayerIds]
+  );
 
   return (
     <div className="space-y-4">
@@ -311,6 +365,7 @@ export function SportDetailView({
             game={game}
             players={players}
             bracket={activeBracket}
+            gamePairs={gamePairs}
             division={game.hasDivisions ? activeDivision : null}
             role={role}
             onShowToast={onShowToast}
@@ -360,7 +415,30 @@ export function SportDetailView({
           {/* c. Two columns directly under the matching team (Blue left, Red right) */}
           <div className="grid grid-cols-2 gap-3 items-start">
             <div className="bg-surface border border-edge rounded-xl p-3 sm:p-4">
-              {blueGroup.length === 0 ? (
+              {gamePairs ? (
+                bluePairs.length === 0 && bluePartnerless.length === 0 ? (
+                  <p className="text-xs text-fg-muted">No Blue players yet.</p>
+                ) : (
+                  <ul>
+                    {bluePairs.map((pair) => (
+                      <PairListRow key={pair.id} pair={pair} />
+                    ))}
+                    {bluePartnerless.map((item) => (
+                      <li
+                        key={item.player.id}
+                        className="flex items-start justify-between gap-2 py-2 border-b border-edge last:border-b-0"
+                      >
+                        <span className="text-sm font-medium text-fg-muted leading-snug break-words min-w-0 flex-1">
+                          {item.player.name}
+                        </span>
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-nested border border-edge text-fg-muted shrink-0">
+                          No partner
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )
+              ) : blueGroup.length === 0 ? (
                 <p className="text-xs text-fg-muted">No Blue players yet.</p>
               ) : (
                 <ul>
@@ -376,7 +454,30 @@ export function SportDetailView({
             </div>
 
             <div className="bg-surface border border-edge rounded-xl p-3 sm:p-4">
-              {redGroup.length === 0 ? (
+              {gamePairs ? (
+                redPairs.length === 0 && redPartnerless.length === 0 ? (
+                  <p className="text-xs text-fg-muted">No Red players yet.</p>
+                ) : (
+                  <ul>
+                    {redPairs.map((pair) => (
+                      <PairListRow key={pair.id} pair={pair} />
+                    ))}
+                    {redPartnerless.map((item) => (
+                      <li
+                        key={item.player.id}
+                        className="flex items-start justify-between gap-2 py-2 border-b border-edge last:border-b-0"
+                      >
+                        <span className="text-sm font-medium text-fg-muted leading-snug break-words min-w-0 flex-1">
+                          {item.player.name}
+                        </span>
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-nested border border-edge text-fg-muted shrink-0">
+                          No partner
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )
+              ) : redGroup.length === 0 ? (
                 <p className="text-xs text-fg-muted">No Red players yet.</p>
               ) : (
                 <ul>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
-import { BracketFormat, Game, Player, SkillLevel } from '../types/models';
+import { BracketFormat, Game, GamePairs, Player, SkillLevel } from '../types/models';
 import { createBracket } from '../services/db';
 import {
   DIVISION_LEVELS,
@@ -15,6 +15,7 @@ interface CreateBracketModalProps {
   open: boolean;
   game: Game;
   players: Player[];
+  gamePairs?: GamePairs | null;
   division?: SkillLevel | null;
   onClose: () => void;
   onShowToast: (type: 'success' | 'error', text: string) => void;
@@ -24,6 +25,7 @@ export function CreateBracketModal({
   open,
   game,
   players,
+  gamePairs = null,
   division = null,
   onClose,
   onShowToast,
@@ -56,8 +58,16 @@ export function CreateBracketModal({
 
   if (!open) return null;
 
-  const blueCount = summary.blue.length;
-  const redCount = summary.red.length;
+  const isPairs = game.type === 'pairs';
+  const blueCount = isPairs
+    ? (gamePairs?.pairs.filter((p) => p.team === 'blue').length ?? 0)
+    : summary.blue.length;
+  const redCount = isPairs
+    ? (gamePairs?.pairs.filter((p) => p.team === 'red').length ?? 0)
+    : summary.red.length;
+  const excludedCount = isPairs
+    ? (gamePairs?.unpaired.length ?? 0)
+    : summary.unassignedCount;
   const missingTeam = blueCount === 0 || redCount === 0;
   const minPlayersError = getTeamMinPlayersError(game, blueCount, redCount);
   const isBlocked = missingTeam || Boolean(minPlayersError);
@@ -74,6 +84,7 @@ export function CreateBracketModal({
       const bracketDocId = getBracketDocId(game.id, activeDivision);
       const bracket = buildInitialBracket(game, players, format, {
         division: activeDivision,
+        gamePairs,
       });
       await createBracket(bracketDocId, bracket);
       onShowToast(
@@ -134,7 +145,13 @@ export function CreateBracketModal({
             <p className="text-lg font-semibold text-fg tabular-nums">
               {blueCount}{' '}
               <span className="text-xs font-normal text-fg-muted">
-                {blueCount === 1 ? 'player' : 'players'}
+                {isPairs
+                  ? blueCount === 1
+                    ? 'pair'
+                    : 'pairs'
+                  : blueCount === 1
+                    ? 'player'
+                    : 'players'}
               </span>
             </p>
           </div>
@@ -147,21 +164,28 @@ export function CreateBracketModal({
             <p className="text-lg font-semibold text-fg tabular-nums">
               {redCount}{' '}
               <span className="text-xs font-normal text-fg-muted">
-                {redCount === 1 ? 'player' : 'players'}
+                {isPairs
+                  ? redCount === 1
+                    ? 'pair'
+                    : 'pairs'
+                  : redCount === 1
+                    ? 'player'
+                    : 'players'}
               </span>
             </p>
           </div>
         </div>
 
-        {summary.unassignedCount > 0 && (
+        {excludedCount > 0 && (
           <div className="flex items-start gap-2.5 p-3 rounded-xl border border-status-amber-edge bg-status-amber-bg text-status-amber-fg">
             <AlertTriangle size={18} className="shrink-0 mt-0.5" />
             <p className="text-xs leading-relaxed">
-              <span className="font-semibold tabular-nums">
-                {summary.unassignedCount}
-              </span>{' '}
-              unassigned {summary.unassignedCount === 1 ? 'player is' : 'players are'}{' '}
-              excluded. Only assigned Blue and Red players are included.
+              <span className="font-semibold tabular-nums">{excludedCount}</span>{' '}
+              {isPairs ? 'unpaired' : 'unassigned'}{' '}
+              {excludedCount === 1 ? 'player is' : 'players are'} excluded.{' '}
+              {isPairs
+                ? 'Only confirmed Blue and Red pairs are included.'
+                : 'Only assigned Blue and Red players are included.'}
             </p>
           </div>
         )}
@@ -213,7 +237,8 @@ export function CreateBracketModal({
               >
                 <p className="text-sm font-semibold text-fg">Round robin</p>
                 <p className="text-xs text-fg-muted mt-0.5">
-                  Every Blue player faces every Red player once.
+                  Every Blue {isPairs ? 'pair' : 'player'} faces every Red{' '}
+                  {isPairs ? 'pair' : 'player'} once.
                 </p>
               </button>
 
@@ -235,7 +260,7 @@ export function CreateBracketModal({
           <span className="text-fg-muted">Matches</span>
           {missingTeam ? (
             <span className="font-medium text-red-light text-right">
-              Need at least 1 Blue and 1 Red player
+              Need at least 1 Blue and 1 Red {isPairs ? 'pair' : 'player'}
             </span>
           ) : format === 'elimination' ? (
             <span className="font-semibold text-fg tabular-nums">
@@ -259,7 +284,9 @@ export function CreateBracketModal({
         ) : (
           missingTeam && (
             <p className="text-xs text-red-light font-medium">
-              Assign at least one player to both Blue and Red before creating a bracket.
+              {isPairs
+                ? 'Both Blue and Red need at least one pair before creating a bracket.'
+                : 'Assign at least one player to both Blue and Red before creating a bracket.'}
             </p>
           )
         )}

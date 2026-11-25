@@ -25,6 +25,7 @@ import {
   DEFAULT_POINTS_PER_MATCH_WIN,
   EventProgram,
   Game,
+  GamePairs,
   Player,
   SEED_GAMES,
   TeamId,
@@ -684,6 +685,58 @@ export async function resetAllTeamAssignments(players: Player[]): Promise<void> 
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, 'players');
+  }
+}
+
+// Pairs (all mutations use runTransaction)
+export function subscribePairs(
+  onData: (pairsByGameId: Map<string, GamePairs>) => void,
+  onError: (error: Error) => void
+): () => void {
+  const q = query(collection(db, 'pairs'));
+  return onSnapshot(
+    q,
+    { includeMetadataChanges: true },
+    (snapshot) => {
+      const map = new Map<string, GamePairs>();
+      for (const d of snapshot.docs) {
+        const data = d.data() as Partial<GamePairs>;
+        map.set(d.id, {
+          pairs: Array.isArray(data.pairs) ? data.pairs : [],
+          unpaired: Array.isArray(data.unpaired) ? data.unpaired : [],
+        });
+      }
+      onData(map);
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.LIST, 'pairs');
+      } catch (e) {
+        onError(e instanceof Error ? e : new Error(String(e)));
+      }
+    }
+  );
+}
+
+export async function saveGamePairs(gameId: string, gamePairs: GamePairs): Promise<void> {
+  const pairsRef = doc(db, 'pairs', gameId);
+  const bracketRef = doc(db, 'brackets', gameId);
+  try {
+    await runTransaction(db, async (tx) => {
+      const bracketSnap = await tx.get(bracketRef);
+      if (bracketSnap.exists()) {
+        throw new Error('Reset the bracket first to change pairs.');
+      }
+      tx.set(pairsRef, {
+        pairs: gamePairs.pairs,
+        unpaired: gamePairs.unpaired,
+      });
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('Reset the bracket first')) {
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.WRITE, `pairs/${gameId}`);
   }
 }
 

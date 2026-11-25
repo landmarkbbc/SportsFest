@@ -179,6 +179,22 @@
       },
       "required": ["format", "status", "matches", "championName", "championTeam", "createdAt"]
     },
+    "GamePairs": {
+      "title": "GamePairs",
+      "description": "Confirmed Blue and Red pairs and unpaired players for a pairs game.",
+      "type": "object",
+      "properties": {
+        "pairs": {
+          "type": "array",
+          "description": "List of confirmed pairs with team, two members, and combined skill level."
+        },
+        "unpaired": {
+          "type": "array",
+          "description": "List of odd-ranked players without a partner, excluded from brackets."
+        }
+      },
+      "required": ["pairs", "unpaired"]
+    },
     "AppSettings": {
       "title": "AppSettings",
       "description": "Device-shared PIN hashes for Scorer and Admin roles.",
@@ -262,6 +278,10 @@
     "/players/{playerId}": {
       "schema": { "$ref": "#/entities/Player" },
       "description": "Registered participants and walk-ins."
+    },
+    "/pairs/{gameId}": {
+      "schema": { "$ref": "#/entities/GamePairs" },
+      "description": "Confirmed Blue and Red pairs keyed by game ID."
     },
     "/brackets/{gameId}": {
       "schema": { "$ref": "#/entities/Bracket" },

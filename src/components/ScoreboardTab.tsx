@@ -116,7 +116,7 @@ export function ScoreboardTab({ loading, scoreboard }: ScoreboardTabProps) {
                     )}
                     <div className="min-w-0">
                       <p className="text-xs text-fg-muted truncate">{row.title}</p>
-                      <p className="text-sm font-semibold text-fg truncate">
+                      <p className="text-sm font-semibold text-fg break-words">
                         {row.championName}
                       </p>
                     </div>

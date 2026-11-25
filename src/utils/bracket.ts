@@ -4,10 +4,12 @@ import {
   BracketMatch,
   BracketSlotSnapshot,
   Game,
+  GamePairs,
   Player,
   SkillLevel,
 } from '../types/models';
 import { getEffectiveLevel } from './balance';
+import { pairToBracketSnapshot } from './pairs';
 
 export type PairingMode = 'closest' | 'random';
 
@@ -351,6 +353,7 @@ export function buildInitialBracket(
   format: BracketFormat,
   options?: {
     division?: SkillLevel | null;
+    gamePairs?: GamePairs | null;
     now?: number;
     randomFn?: () => number;
   }
@@ -359,13 +362,29 @@ export function buildInitialBracket(
   const now = options?.now ?? Date.now();
   const randomFn = options?.randomFn ?? Math.random;
 
-  const { blue, red } = getGameParticipantsSummary(game.id, players, {
-    division,
-    usesSkillLevel: game.usesSkillLevel,
-  });
+  let blue: BracketSlotSnapshot[];
+  let red: BracketSlotSnapshot[];
 
-  if (blue.length === 0 || red.length === 0) {
-    throw new Error('Both Blue and Red teams must have at least 1 assigned player.');
+  if (game.type === 'pairs') {
+    if (!options?.gamePairs) {
+      throw new Error('Make pairs first before creating a bracket.');
+    }
+    const snapshots = options.gamePairs.pairs.map(pairToBracketSnapshot);
+    blue = sortByLevelDesc(snapshots.filter((s) => s.team === 'blue'));
+    red = sortByLevelDesc(snapshots.filter((s) => s.team === 'red'));
+    if (blue.length === 0 || red.length === 0) {
+      throw new Error('Both Blue and Red teams must have at least 1 pair.');
+    }
+  } else {
+    const summary = getGameParticipantsSummary(game.id, players, {
+      division,
+      usesSkillLevel: game.usesSkillLevel,
+    });
+    blue = summary.blue;
+    red = summary.red;
+    if (blue.length === 0 || red.length === 0) {
+      throw new Error('Both Blue and Red teams must have at least 1 assigned player.');
+    }
   }
 
   const minErr = getTeamMinPlayersError(game, blue.length, red.length);

@@ -124,8 +124,33 @@ export interface BracketSlotSnapshot {
   playerId: string;
   name: string;
   team: TeamId;
-  dept: Department | null;
-  level: SkillLevel | null;
+  dept: Department | '' | null;
+  level: number | null;
+}
+
+export interface PairMember {
+  playerId: string;
+  name: string;
+  level: SkillLevel;
+  dept: Department;
+}
+
+export interface GamePair {
+  id: string;
+  team: TeamId;
+  members: [PairMember, PairMember];
+  combined: number;
+}
+
+export interface UnpairedPlayer {
+  playerId: string;
+  name: string;
+  team: TeamId;
+}
+
+export interface GamePairs {
+  pairs: GamePair[];
+  unpaired: UnpairedPlayer[];
 }
 
 export interface BracketMatch {
