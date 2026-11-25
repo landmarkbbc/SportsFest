@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Trophy } from 'lucide-react';
+import { ArrowLeft, Trophy } from 'lucide-react';
 import {
   Bracket,
   DEPARTMENTS,
@@ -32,6 +32,7 @@ interface SportDetailViewProps {
   players: Player[];
   bracketsByGameId: Map<string, Bracket>;
   role: Role;
+  onBack: () => void;
   onShowToast: (type: 'success' | 'error', text: string) => void;
 }
 
@@ -77,6 +78,7 @@ export function SportDetailView({
   players,
   bracketsByGameId,
   role,
+  onBack,
   onShowToast,
 }: SportDetailViewProps) {
   const hasExistingBracket = useMemo(() => {
@@ -152,6 +154,14 @@ export function SportDetailView({
       <div className="bg-surface border border-edge rounded-xl p-4 space-y-3">
         <div>
           <div className="flex items-center gap-2.5 flex-wrap">
+            <button
+              type="button"
+              onClick={onBack}
+              aria-label="Back to sports"
+              className="w-11 h-11 rounded-full border border-edge bg-transparent hover:bg-nested hover:border-edge-hover text-fg inline-flex items-center justify-center shrink-0 transition-colors duration-150"
+            >
+              <ArrowLeft size={18} />
+            </button>
             {game.iconKey && (
               <SportIcon iconKey={game.iconKey} size={24} className="text-fg" />
             )}

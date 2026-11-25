@@ -665,6 +665,7 @@ export default function App() {
                 players={players}
                 bracketsByGameId={bracketsByGameId}
                 role={role}
+                onBack={() => setSelectedSport(null)}
                 onShowToast={showToast}
               />
             ) : (
