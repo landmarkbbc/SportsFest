@@ -79,6 +79,7 @@ export function GameFormModal({
   const [usesSkillLevel, setUsesSkillLevel] = useState(false);
   const [hasDivisions, setHasDivisions] = useState(false);
   const [minPlayersInput, setMinPlayersInput] = useState('');
+  const [head, setHead] = useState('');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -96,6 +97,7 @@ export function GameFormModal({
           ? String(editingGame.minPlayersPerTeam)
           : ''
       );
+      setHead(editingGame.head ?? '');
     } else {
       setName('');
       setType('individual');
@@ -105,6 +107,7 @@ export function GameFormModal({
       setUsesSkillLevel(false);
       setHasDivisions(false);
       setMinPlayersInput('');
+      setHead('');
     }
     setSaving(false);
   }, [open, editingGame]);
@@ -171,6 +174,7 @@ export function GameFormModal({
       const effectiveUsesSkill = type === 'individual' && hasDivisions ? true : usesSkillLevel;
       const effectiveHasDivisions =
         type === 'individual' && effectiveUsesSkill ? hasDivisions : false;
+      const cleanHead = head.trim().slice(0, 40);
 
       await onSave({
         name: cleanName,
@@ -181,6 +185,7 @@ export function GameFormModal({
         usesSkillLevel: effectiveUsesSkill,
         hasDivisions: effectiveHasDivisions,
         minPlayersPerTeam,
+        head: cleanHead || null,
       });
       onClose();
     } finally {
@@ -247,6 +252,24 @@ export function GameFormModal({
                 A sport named &apos;{collapsedName}&apos; already exists.
               </p>
             )}
+          </div>
+
+          <div>
+            <label
+              htmlFor="game-head-input"
+              className="block text-sm font-medium text-fg mb-1.5"
+            >
+              Sport head (optional)
+            </label>
+            <input
+              id="game-head-input"
+              type="text"
+              value={head}
+              maxLength={40}
+              onChange={(e) => setHead(e.target.value)}
+              placeholder="Optional"
+              className="w-full min-h-[44px] px-3 py-2 rounded-xl border border-edge bg-nested text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:ring-2 focus:ring-fg"
+            />
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

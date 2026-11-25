@@ -52,6 +52,11 @@
           "type": "integer",
           "description": "Points awarded to the champion's team when the bracket finishes (0-99, default 3)."
         },
+        "head": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "Optional sport head name (max 40 characters) or null."
+        },
         "createdAt": {
           "type": "integer"
         },

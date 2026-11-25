@@ -53,6 +53,7 @@ export interface Game {
   minPlayersPerTeam: number | null;
   pointsPerMatchWin: number;
   pointsChampion: number;
+  head?: string | null;
   createdAt: number;
   updatedAt?: number;
 }

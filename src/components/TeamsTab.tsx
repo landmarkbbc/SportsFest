@@ -17,7 +17,11 @@ import {
   TeamId,
 } from '../types/models';
 import {
+  DEPT_GENDER_GROUPS,
+  DeptGenderKey,
   computeAllGameStats,
+  emptyDeptGenderCounts,
+  getDeptGenderKey,
   getDisplayGameBalanceStatus,
 } from '../utils/balance';
 import { SportIcon } from './SportIcons';
@@ -79,6 +83,14 @@ function countByDepartment(members: Player[]): Record<Department, number> {
   return counts;
 }
 
+function countByDeptGender(members: Player[]): Record<DeptGenderKey, number> {
+  const counts = emptyDeptGenderCounts();
+  for (const player of members) {
+    counts[getDeptGenderKey(player)] += 1;
+  }
+  return counts;
+}
+
 export function TeamsTab({
   loading,
   players,
@@ -125,6 +137,16 @@ export function TeamsTab({
 
   const redDeptCounts = useMemo(
     () => countByDepartment(redPlayers),
+    [redPlayers]
+  );
+
+  const blueDeptGenderCounts = useMemo(
+    () => countByDeptGender(bluePlayers),
+    [bluePlayers]
+  );
+
+  const redDeptGenderCounts = useMemo(
+    () => countByDeptGender(redPlayers),
     [redPlayers]
   );
 
@@ -378,6 +400,30 @@ export function TeamsTab({
                           <span className="text-blue-light">{blueDeptCounts[dept]}</span>
                           <span className="text-fg-muted font-normal"> vs </span>
                           <span className="text-red-light">{redDeptCounts[dept]}</span>
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Department by gender (all players) */}
+              <div>
+                <h3 className="text-[16px] font-semibold text-fg mb-3">
+                  Department by gender (all players)
+                </h3>
+                <div className="bg-nested border border-edge rounded-xl p-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+                    {DEPT_GENDER_GROUPS.map((group) => (
+                      <div
+                        key={group.key}
+                        className="p-2.5 rounded-lg bg-surface border border-edge text-xs"
+                      >
+                        <p className="text-fg-muted font-medium">{group.label}</p>
+                        <p className="text-sm font-semibold text-fg tabular-nums mt-1">
+                          <span className="text-blue-light">{blueDeptGenderCounts[group.key]}</span>
+                          <span className="text-fg-muted font-normal"> vs </span>
+                          <span className="text-red-light">{redDeptGenderCounts[group.key]}</span>
                         </p>
                       </div>
                     ))}

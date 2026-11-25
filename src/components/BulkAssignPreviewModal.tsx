@@ -1,6 +1,10 @@
 import { ArrowRight, X } from 'lucide-react';
 import { DEPARTMENTS } from '../types/models';
-import { BulkAssignmentPlan, getDisplayGameBalanceStatus } from '../utils/balance';
+import {
+  BulkAssignmentPlan,
+  DEPT_GENDER_GROUPS,
+  getDisplayGameBalanceStatus,
+} from '../utils/balance';
 import { SportIcon } from './SportIcons';
 import { BalanceBadge } from './TeamBadge';
 
@@ -137,6 +141,32 @@ export function BulkAssignPreviewModal({
                       <span className="text-fg-muted"> vs </span>
                       <span className="text-red-light">{beforeR}</span>
                       <span className="text-fg-muted mx-1">→</span>
+                      <span className="text-blue-light font-semibold">{afterB}</span>
+                      <span className="text-fg-muted"> vs </span>
+                      <span className="text-red-light font-semibold">{afterR}</span>
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Department by gender (after proposed assignment) */}
+          <div className="p-3 rounded-xl border border-edge bg-nested space-y-2">
+            <p className="text-xs font-semibold text-fg">
+              Department by gender (after assignment)
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {DEPT_GENDER_GROUPS.map((group) => {
+                const afterB = plan.deptGenderAfter.blue[group.key];
+                const afterR = plan.deptGenderAfter.red[group.key];
+                return (
+                  <div
+                    key={group.key}
+                    className="px-2.5 py-1.5 rounded-lg bg-surface border border-edge text-xs"
+                  >
+                    <p className="text-fg-muted font-medium">{group.label}</p>
+                    <p className="tabular-nums mt-0.5">
                       <span className="text-blue-light font-semibold">{afterB}</span>
                       <span className="text-fg-muted"> vs </span>
                       <span className="text-red-light font-semibold">{afterR}</span>

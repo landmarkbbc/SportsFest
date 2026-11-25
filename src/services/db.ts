@@ -183,6 +183,9 @@ function normalizeGame(raw: Partial<Game> & { id: string; name: string }): Game 
       ? Math.max(0, Math.min(99, Math.trunc(raw.pointsChampion)))
       : DEFAULT_POINTS_CHAMPION;
 
+  const trimmedHead = typeof raw.head === 'string' ? raw.head.trim().slice(0, 40) : '';
+  const head = trimmedHead.length > 0 ? trimmedHead : null;
+
   return {
     id: raw.id,
     name: raw.name,
@@ -195,6 +198,7 @@ function normalizeGame(raw: Partial<Game> & { id: string; name: string }): Game 
     minPlayersPerTeam,
     pointsPerMatchWin,
     pointsChampion,
+    head,
     createdAt: raw.createdAt ?? Date.now(),
     updatedAt: raw.updatedAt,
   };
@@ -390,6 +394,7 @@ export type GameInput = Pick<
   | 'usesSkillLevel'
   | 'hasDivisions'
   | 'minPlayersPerTeam'
+  | 'head'
 >;
 
 export async function createGame(input: GameInput): Promise<Game> {
@@ -401,6 +406,8 @@ export async function createGame(input: GameInput): Promise<Game> {
     input.type === 'team' && input.minPlayersPerTeam && input.minPlayersPerTeam > 0
       ? Math.trunc(input.minPlayersPerTeam)
       : null;
+  const trimmedHead = typeof input.head === 'string' ? input.head.trim().slice(0, 40) : '';
+  const head = trimmedHead.length > 0 ? trimmedHead : null;
 
   const game: Game = {
     id,
@@ -414,6 +421,7 @@ export async function createGame(input: GameInput): Promise<Game> {
     minPlayersPerTeam,
     pointsPerMatchWin: DEFAULT_POINTS_PER_MATCH_WIN,
     pointsChampion: DEFAULT_POINTS_CHAMPION,
+    head,
     createdAt: now,
     updatedAt: now,
   };
@@ -438,6 +446,8 @@ export async function updateGame(
     updates.type === 'team' && updates.minPlayersPerTeam && updates.minPlayersPerTeam > 0
       ? Math.trunc(updates.minPlayersPerTeam)
       : null;
+  const trimmedHead = typeof updates.head === 'string' ? updates.head.trim().slice(0, 40) : '';
+  const head = trimmedHead.length > 0 ? trimmedHead : null;
 
   try {
     await updateDoc(doc(db, 'games', gameId), {
@@ -449,6 +459,7 @@ export async function updateGame(
       usesSkillLevel,
       hasDivisions,
       minPlayersPerTeam,
+      head,
       updatedAt: Date.now(),
     });
   } catch (error) {

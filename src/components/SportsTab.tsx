@@ -99,6 +99,12 @@ export function SportsTab({
                 </span>
               </p>
 
+              {game.head && (
+                <p className="text-xs text-fg-muted leading-snug break-words">
+                  {game.head}
+                </p>
+              )}
+
               <div>
                 <BalanceBadge status={displayStatus} />
               </div>

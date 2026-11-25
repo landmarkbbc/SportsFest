@@ -28,7 +28,7 @@ service cloud.firestore {
     // Game schema validation
     function isValidGame(data, gameId) {
       return data.keys().hasAll(['id', 'name', 'type', 'eligibility', 'session', 'iconKey', 'createdAt'])
-        && data.keys().hasOnly(['id', 'name', 'type', 'eligibility', 'session', 'iconKey', 'usesSkillLevel', 'hasDivisions', 'minPlayersPerTeam', 'pointsPerMatchWin', 'pointsChampion', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'name', 'type', 'eligibility', 'session', 'iconKey', 'usesSkillLevel', 'hasDivisions', 'minPlayersPerTeam', 'pointsPerMatchWin', 'pointsChampion', 'head', 'createdAt', 'updatedAt'])
         && data.id == gameId
         && isValidId(data.id)
         && data.name is string
@@ -43,6 +43,7 @@ service cloud.firestore {
         && (!('minPlayersPerTeam' in data) || data.minPlayersPerTeam == null || (data.minPlayersPerTeam is int && data.minPlayersPerTeam >= 1 && data.minPlayersPerTeam <= 99))
         && (!('pointsPerMatchWin' in data) || (data.pointsPerMatchWin is int && data.pointsPerMatchWin >= 0 && data.pointsPerMatchWin <= 99))
         && (!('pointsChampion' in data) || (data.pointsChampion is int && data.pointsChampion >= 0 && data.pointsChampion <= 99))
+        && (!('head' in data) || data.head == null || (data.head is string && data.head.size() <= 40))
         && data.createdAt is int
         && data.createdAt > 0
         && (!('updatedAt' in data) || (data.updatedAt is int && data.updatedAt > 0));
@@ -191,7 +192,7 @@ service cloud.firestore {
         && isValidGame(incoming(), gameId)
         && incoming().id == existing().id
         && incoming().createdAt == existing().createdAt
-        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'type', 'eligibility', 'session', 'iconKey', 'usesSkillLevel', 'hasDivisions', 'minPlayersPerTeam', 'pointsPerMatchWin', 'pointsChampion', 'updatedAt']);
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'type', 'eligibility', 'session', 'iconKey', 'usesSkillLevel', 'hasDivisions', 'minPlayersPerTeam', 'pointsPerMatchWin', 'pointsChampion', 'head', 'updatedAt']);
       allow delete: if isSignedIn() && isValidId(gameId);
     }
 

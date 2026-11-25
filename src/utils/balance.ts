@@ -20,6 +20,50 @@ export const COST_WEIGHTS = {
 
 export const ROSTER_HEADCOUNT_WEIGHT = 2;
 export const ROSTER_DEPARTMENT_WEIGHT = 3;
+export const ROSTER_DEPT_GENDER_WEIGHT = 2;
+
+export type DeptGenderKey =
+  | 'Kids'
+  | 'YP:M'
+  | 'YP:F'
+  | 'SP:M'
+  | 'SP:F'
+  | 'Adults:M'
+  | 'Adults:F';
+
+export const DEPT_GENDER_GROUPS: {
+  key: DeptGenderKey;
+  label: string;
+  dept: Department;
+  gender?: Gender;
+}[] = [
+  { key: 'Kids', label: 'Kids', dept: 'Kids' },
+  { key: 'YP:M', label: 'YP males', dept: 'YP', gender: 'M' },
+  { key: 'YP:F', label: 'YP females', dept: 'YP', gender: 'F' },
+  { key: 'SP:M', label: 'SP males', dept: 'SP', gender: 'M' },
+  { key: 'SP:F', label: 'SP females', dept: 'SP', gender: 'F' },
+  { key: 'Adults:M', label: 'Adults males', dept: 'Adults', gender: 'M' },
+  { key: 'Adults:F', label: 'Adults females', dept: 'Adults', gender: 'F' },
+];
+
+export function getDeptGenderKey(
+  player: Pick<Player, 'department' | 'gender'>
+): DeptGenderKey {
+  if (player.department === 'Kids') return 'Kids';
+  return `${player.department}:${player.gender}` as DeptGenderKey;
+}
+
+export function emptyDeptGenderCounts(): Record<DeptGenderKey, number> {
+  return {
+    Kids: 0,
+    'YP:M': 0,
+    'YP:F': 0,
+    'SP:M': 0,
+    'SP:F': 0,
+    'Adults:M': 0,
+    'Adults:F': 0,
+  };
+}
 
 export const BALANCE_THRESHOLDS = {
   BALANCED_MAX_HEADCOUNT_DIFF: 1,
@@ -209,7 +253,9 @@ export function computeRosterCost(
   blueTotal: number,
   redTotal: number,
   blueDeptCounts: Record<Department, number>,
-  redDeptCounts: Record<Department, number>
+  redDeptCounts: Record<Department, number>,
+  blueDeptGenderCounts?: Record<DeptGenderKey, number>,
+  redDeptGenderCounts?: Record<DeptGenderKey, number>
 ): number {
   const headDiff = blueTotal - redTotal;
   let deptSqSum = 0;
@@ -217,9 +263,17 @@ export function computeRosterCost(
     const d = blueDeptCounts[dept] - redDeptCounts[dept];
     deptSqSum += d * d;
   }
+  let deptGenderSqSum = 0;
+  if (blueDeptGenderCounts && redDeptGenderCounts) {
+    for (const group of DEPT_GENDER_GROUPS) {
+      const dg = blueDeptGenderCounts[group.key] - redDeptGenderCounts[group.key];
+      deptGenderSqSum += dg * dg;
+    }
+  }
   return (
     ROSTER_HEADCOUNT_WEIGHT * (headDiff * headDiff) +
-    ROSTER_DEPARTMENT_WEIGHT * deptSqSum
+    ROSTER_DEPARTMENT_WEIGHT * deptSqSum +
+    ROSTER_DEPT_GENDER_WEIGHT * deptGenderSqSum
   );
 }
 
@@ -294,17 +348,22 @@ export function computeTotalCost(
   let redTotal = 0;
   const blueDeptCounts: Record<Department, number> = { Kids: 0, YP: 0, SP: 0, Adults: 0 };
   const redDeptCounts: Record<Department, number> = { Kids: 0, YP: 0, SP: 0, Adults: 0 };
+  const blueDeptGenderCounts = emptyDeptGenderCounts();
+  const redDeptGenderCounts = emptyDeptGenderCounts();
 
   for (const player of players) {
     const assignedTeam = player.team ?? proposedMap?.get(player.id) ?? null;
     if (!assignedTeam) continue;
 
+    const dgKey = getDeptGenderKey(player);
     if (assignedTeam === 'blue') {
       blueTotal += 1;
       blueDeptCounts[player.department] += 1;
+      blueDeptGenderCounts[dgKey] += 1;
     } else {
       redTotal += 1;
       redDeptCounts[player.department] += 1;
+      redDeptGenderCounts[dgKey] += 1;
     }
 
     for (const entry of player.entries) {
@@ -331,7 +390,14 @@ export function computeTotalCost(
     }
   }
 
-  let totalCost = computeRosterCost(blueTotal, redTotal, blueDeptCounts, redDeptCounts);
+  let totalCost = computeRosterCost(
+    blueTotal,
+    redTotal,
+    blueDeptCounts,
+    redDeptCounts,
+    blueDeptGenderCounts,
+    redDeptGenderCounts
+  );
   for (const [gameId, bucket] of gameMap.entries()) {
     totalCost += computeGameBucketCost(bucket, gameById.get(gameId));
   }
@@ -346,6 +412,8 @@ interface MutableRosterState {
   redTotalPlayers: number;
   blueDeptCounts: Record<Department, number>;
   redDeptCounts: Record<Department, number>;
+  blueDeptGenderCounts: Record<DeptGenderKey, number>;
+  redDeptGenderCounts: Record<DeptGenderKey, number>;
 }
 
 function buildMutableState(players: Player[], games: Game[]): MutableRosterState {
@@ -355,15 +423,20 @@ function buildMutableState(players: Player[], games: Game[]): MutableRosterState
   let redTotalPlayers = 0;
   const blueDeptCounts: Record<Department, number> = { Kids: 0, YP: 0, SP: 0, Adults: 0 };
   const redDeptCounts: Record<Department, number> = { Kids: 0, YP: 0, SP: 0, Adults: 0 };
+  const blueDeptGenderCounts = emptyDeptGenderCounts();
+  const redDeptGenderCounts = emptyDeptGenderCounts();
 
   for (const player of players) {
     if (!player.team) continue;
+    const dgKey = getDeptGenderKey(player);
     if (player.team === 'blue') {
       blueTotalPlayers += 1;
       blueDeptCounts[player.department] += 1;
+      blueDeptGenderCounts[dgKey] += 1;
     } else {
       redTotalPlayers += 1;
       redDeptCounts[player.department] += 1;
+      redDeptGenderCounts[dgKey] += 1;
     }
 
     for (const entry of player.entries) {
@@ -397,6 +470,8 @@ function buildMutableState(players: Player[], games: Game[]): MutableRosterState
     redTotalPlayers,
     blueDeptCounts,
     redDeptCounts,
+    blueDeptGenderCounts,
+    redDeptGenderCounts,
   };
 }
 
@@ -406,12 +481,15 @@ function applyPlayerToState(
   team: TeamId,
   sign: 1 | -1
 ): void {
+  const dgKey = getDeptGenderKey(player);
   if (team === 'blue') {
     state.blueTotalPlayers += sign;
     state.blueDeptCounts[player.department] += sign;
+    state.blueDeptGenderCounts[dgKey] += sign;
   } else {
     state.redTotalPlayers += sign;
     state.redDeptCounts[player.department] += sign;
+    state.redDeptGenderCounts[dgKey] += sign;
   }
 
   for (const entry of player.entries) {
@@ -443,7 +521,9 @@ function sumAllStateCost(state: MutableRosterState): number {
     state.blueTotalPlayers,
     state.redTotalPlayers,
     state.blueDeptCounts,
-    state.redDeptCounts
+    state.redDeptCounts,
+    state.blueDeptGenderCounts,
+    state.redDeptGenderCounts
   );
   for (const [gameId, bucket] of state.buckets.entries()) {
     total += computeGameBucketCost(bucket, state.gameById.get(gameId));
@@ -464,7 +544,9 @@ function deltaCostForSwap(
     state.blueTotalPlayers,
     state.redTotalPlayers,
     state.blueDeptCounts,
-    state.redDeptCounts
+    state.redDeptCounts,
+    state.blueDeptGenderCounts,
+    state.redDeptGenderCounts
   );
   for (const gId of touchedGames) {
     const b = state.buckets.get(gId);
@@ -480,7 +562,9 @@ function deltaCostForSwap(
     state.blueTotalPlayers,
     state.redTotalPlayers,
     state.blueDeptCounts,
-    state.redDeptCounts
+    state.redDeptCounts,
+    state.blueDeptGenderCounts,
+    state.redDeptGenderCounts
   );
   for (const gId of touchedGames) {
     const b = state.buckets.get(gId);
@@ -522,6 +606,10 @@ export interface BulkAssignmentPlan {
   iterationsUsed: number;
   gameComparisons: GameBalanceComparison[];
   departmentComparison: BulkDepartmentComparison;
+  deptGenderAfter: {
+    blue: Record<DeptGenderKey, number>;
+    red: Record<DeptGenderKey, number>;
+  };
 }
 
 export function planBulkAssignment(allPlayers: Player[], games: Game[]): BulkAssignmentPlan {
@@ -634,20 +722,27 @@ export function planBulkAssignment(allPlayers: Player[], games: Game[]): BulkAss
   const beforeDeptRed: Record<Department, number> = { Kids: 0, YP: 0, SP: 0, Adults: 0 };
   const afterDeptBlue: Record<Department, number> = { Kids: 0, YP: 0, SP: 0, Adults: 0 };
   const afterDeptRed: Record<Department, number> = { Kids: 0, YP: 0, SP: 0, Adults: 0 };
+  const afterDeptGenderBlue = emptyDeptGenderCounts();
+  const afterDeptGenderRed = emptyDeptGenderCounts();
 
   for (const p of allPlayers) {
+    const dgKey = getDeptGenderKey(p);
     if (p.team === 'blue') {
       beforeDeptBlue[p.department] += 1;
       afterDeptBlue[p.department] += 1;
+      afterDeptGenderBlue[dgKey] += 1;
     } else if (p.team === 'red') {
       beforeDeptRed[p.department] += 1;
       afterDeptRed[p.department] += 1;
+      afterDeptGenderRed[dgKey] += 1;
     } else {
       const proposed = proposedMap.get(p.id);
       if (proposed === 'blue') {
         afterDeptBlue[p.department] += 1;
+        afterDeptGenderBlue[dgKey] += 1;
       } else if (proposed === 'red') {
         afterDeptRed[p.department] += 1;
+        afterDeptGenderRed[dgKey] += 1;
       }
     }
   }
@@ -663,6 +758,10 @@ export function planBulkAssignment(allPlayers: Player[], games: Game[]): BulkAss
     departmentComparison: {
       before: { blue: beforeDeptBlue, red: beforeDeptRed },
       after: { blue: afterDeptBlue, red: afterDeptRed },
+    },
+    deptGenderAfter: {
+      blue: afterDeptGenderBlue,
+      red: afterDeptGenderRed,
     },
   };
 }
