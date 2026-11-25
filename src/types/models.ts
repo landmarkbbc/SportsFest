@@ -78,6 +78,42 @@ export interface AppSettings {
   updatedAt: number;
 }
 
+export interface ProgramRow {
+  id: string;
+  start: string;
+  activity: string;
+}
+
+export interface EventProgram {
+  rows: ProgramRow[];
+  endTime: string;
+  updatedAt?: number;
+}
+
+export const DEFAULT_PROGRAM: EventProgram = {
+  rows: [
+    { id: 'prog_01', start: '07:00', activity: 'Setup' },
+    { id: 'prog_02', start: '07:45', activity: 'Registration opens' },
+    { id: 'prog_03', start: '08:15', activity: 'Opening prayer, welcome, rules' },
+    { id: 'prog_04', start: '08:25', activity: 'Devotion' },
+    { id: 'prog_05', start: '08:40', activity: 'Warm-up' },
+    { id: 'prog_06', start: '08:50', activity: 'Mass active games' },
+    { id: 'prog_07', start: '10:00', activity: 'Move to morning stations' },
+    { id: 'prog_08', start: '10:05', activity: 'Morning games' },
+    { id: 'prog_09', start: '11:45', activity: 'Final bell' },
+    { id: 'prog_10', start: '12:00', activity: 'Lunch (buffet)' },
+    { id: 'prog_11', start: '12:30', activity: 'Morning awards' },
+    { id: 'prog_12', start: '12:50', activity: 'On deck' },
+    { id: 'prog_13', start: '13:00', activity: 'Volleyball, ladies' },
+    { id: 'prog_14', start: '13:34', activity: 'Volleyball, men' },
+    { id: 'prog_15', start: '14:08', activity: 'Basketball, women' },
+    { id: 'prog_16', start: '14:40', activity: 'Basketball, men' },
+    { id: 'prog_17', start: '15:15', activity: 'Final tally, awards, closing prayer' },
+    { id: 'prog_18', start: '15:30', activity: 'Cleanup and loading' },
+  ],
+  endTime: '16:00',
+};
+
 // Match Brackets (Part 2)
 export type BracketFormat = 'elimination' | 'roundrobin' | 'teammatch';
 export type BracketStatus = 'active' | 'complete';

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ChevronDown,
   Database,
   Download,
   Edit3,
@@ -187,6 +188,10 @@ export function SettingsTab({
   const [resetStep2Open, setResetStep2Open] = useState(false);
   const [resettingTeams, setResettingTeams] = useState(false);
 
+  // Accordion states (collapsed by default, not remembered)
+  const [pointsOpen, setPointsOpen] = useState(false);
+  const [manageGamesOpen, setManageGamesOpen] = useState(false);
+
   const playerCountByGameId = useMemo(() => {
     const map = new Map<string, number>();
     for (const p of players) {
@@ -322,7 +327,7 @@ export function SettingsTab({
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
       {/* Role & PIN Card */}
-      <section className="bg-surface border border-edge rounded-xl p-4 sm:p-5 space-y-4">
+      <section className="lg:col-span-2 bg-surface border border-edge rounded-xl p-4 sm:p-5 space-y-4">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
             <KeyRound size={20} className="text-fg" />
@@ -426,8 +431,136 @@ export function SettingsTab({
         )}
       </section>
 
-      {/* Data Tools Card */}
-      <section className="bg-surface border border-edge rounded-xl p-4 sm:p-5 space-y-4">
+      {/* Points Accordion (Collapsed by default, Admin only to edit) */}
+      <section className="lg:col-span-2 bg-surface border border-edge rounded-xl px-4 sm:px-5 py-2.5">
+        <button
+          type="button"
+          aria-expanded={pointsOpen}
+          onClick={() => setPointsOpen((v) => !v)}
+          className="w-full min-h-[44px] flex items-center justify-between gap-3 text-left"
+        >
+          <div className="flex items-center gap-2.5 min-w-0">
+            <Trophy size={20} className="text-fg shrink-0" />
+            <span className="text-[16px] font-semibold text-fg">Points</span>
+          </div>
+          <ChevronDown
+            size={18}
+            className={`text-fg-muted shrink-0 transition-transform duration-150 ${
+              pointsOpen ? 'rotate-180' : ''
+            }`}
+          />
+        </button>
+
+        {pointsOpen && (
+          <div className="pt-3 pb-2.5 border-t border-edge mt-2 space-y-4">
+            <p className="text-xs text-fg-muted">
+              {isAdmin
+                ? 'Changes save instantly. Division games apply champion points per division.'
+                : 'Admin only. Scorer and Viewer cannot edit.'}
+            </p>
+            <div className="divide-y divide-edge">
+              {games.map((game) => (
+                <PointsGameRow
+                  key={game.id}
+                  game={game}
+                  isAdmin={isAdmin}
+                  onSavePoints={onUpdateGamePoints}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* Manage Games Accordion (Collapsed by default) */}
+      <section className="lg:col-span-2 bg-surface border border-edge rounded-xl px-4 sm:px-5 py-2.5">
+        <button
+          type="button"
+          aria-expanded={manageGamesOpen}
+          onClick={() => setManageGamesOpen((v) => !v)}
+          className="w-full min-h-[44px] flex items-center justify-between gap-3 text-left"
+        >
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="text-[16px] font-semibold text-fg">Manage Games</span>
+            <span className="text-xs text-fg-muted tabular-nums">
+              ({games.length})
+            </span>
+          </div>
+          <ChevronDown
+            size={18}
+            className={`text-fg-muted shrink-0 transition-transform duration-150 ${
+              manageGamesOpen ? 'rotate-180' : ''
+            }`}
+          />
+        </button>
+
+        {manageGamesOpen && (
+          <div className="pt-3 pb-2.5 border-t border-edge mt-2 space-y-4">
+            {isAdmin && (
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={openNewGameForm}
+                  className="min-h-[44px] px-4 py-2 rounded-xl bg-primary text-primary-fg text-xs font-medium hover:bg-primary-hover inline-flex items-center gap-1.5"
+                >
+                  <Plus size={18} />
+                  <span>Add Game</span>
+                </button>
+              </div>
+            )}
+
+            <div className="divide-y divide-edge">
+              {games.map((game) => {
+                const pCount = playerCountByGameId.get(game.id) ?? 0;
+                return (
+                  <div
+                    key={game.id}
+                    className="py-3 first:pt-0 last:pb-0 flex items-center justify-between gap-3"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      {game.iconKey && (
+                        <SportIcon iconKey={game.iconKey} size={20} className="text-fg" />
+                      )}
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-fg truncate">{game.name}</p>
+                        <p className="text-xs text-fg-muted tabular-nums">
+                          {GAME_TYPE_LABELS[game.type]} · {ELIGIBILITY_LABELS[game.eligibility]} ·{' '}
+                          {GAME_SESSION_LABELS[game.session]} · {pCount}{' '}
+                          {pCount === 1 ? 'player' : 'players'}
+                        </p>
+                      </div>
+                    </div>
+
+                    {isAdmin && (
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => openEditGameForm(game)}
+                          aria-label={`Edit ${game.name}`}
+                          className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-fg-muted hover:text-fg hover:bg-nested"
+                        >
+                          <Edit3 size={18} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeleteTargetGame(game)}
+                          aria-label={`Delete ${game.name}`}
+                          className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-fg-muted hover:text-fg hover:bg-nested"
+                        >
+                          <Trash2 size={18} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* Data Tools Card (Very bottom of Settings) */}
+      <section className="lg:col-span-2 bg-surface border border-edge rounded-xl p-4 sm:p-5 space-y-4">
         <div className="flex items-center gap-2.5">
           <Database size={20} className="text-fg" />
           <h2 className="text-[16px] font-semibold text-fg">Data Tools</h2>
@@ -454,101 +587,6 @@ export function SettingsTab({
               <RotateCcw size={20} />
             </button>
           )}
-        </div>
-      </section>
-
-      {/* Points Card (Full width on lg, Admin only to edit) */}
-      <section className="lg:col-span-2 bg-surface border border-edge rounded-xl p-4 sm:p-5 space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <Trophy size={20} className="text-fg" />
-            <div>
-              <h2 className="text-[16px] font-semibold text-fg">Points</h2>
-              <p className="text-xs text-fg-muted">
-                {isAdmin
-                  ? 'Changes save instantly. Division games apply champion points per division.'
-                  : 'Admin only. Scorer and Viewer cannot edit.'}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="divide-y divide-edge">
-          {games.map((game) => (
-            <PointsGameRow
-              key={game.id}
-              game={game}
-              isAdmin={isAdmin}
-              onSavePoints={onUpdateGamePoints}
-            />
-          ))}
-        </div>
-      </section>
-
-      {/* Manage Games Card (Full width on lg) */}
-      <section className="lg:col-span-2 bg-surface border border-edge rounded-xl p-4 sm:p-5 space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h2 className="text-[16px] font-semibold text-fg">Manage Games</h2>
-            <p className="text-xs text-fg-muted tabular-nums">{games.length} active games</p>
-          </div>
-          {isAdmin && (
-            <button
-              type="button"
-              onClick={openNewGameForm}
-              className="min-h-[44px] px-4 py-2 rounded-xl bg-primary text-primary-fg text-xs font-medium hover:bg-primary-hover inline-flex items-center gap-1.5"
-            >
-              <Plus size={18} />
-              <span>Add Game</span>
-            </button>
-          )}
-        </div>
-
-        <div className="divide-y divide-edge">
-          {games.map((game) => {
-            const pCount = playerCountByGameId.get(game.id) ?? 0;
-            return (
-              <div
-                key={game.id}
-                className="py-3 first:pt-0 last:pb-0 flex items-center justify-between gap-3"
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  {game.iconKey && (
-                    <SportIcon iconKey={game.iconKey} size={20} className="text-fg" />
-                  )}
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-fg truncate">{game.name}</p>
-                    <p className="text-xs text-fg-muted tabular-nums">
-                      {GAME_TYPE_LABELS[game.type]} · {ELIGIBILITY_LABELS[game.eligibility]} ·{' '}
-                      {GAME_SESSION_LABELS[game.session]} · {pCount}{' '}
-                      {pCount === 1 ? 'player' : 'players'}
-                    </p>
-                  </div>
-                </div>
-
-                {isAdmin && (
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => openEditGameForm(game)}
-                      aria-label={`Edit ${game.name}`}
-                      className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-fg-muted hover:text-fg hover:bg-nested"
-                    >
-                      <Edit3 size={18} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDeleteTargetGame(game)}
-                      aria-label={`Delete ${game.name}`}
-                      className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-fg-muted hover:text-fg hover:bg-nested"
-                    >
-                      <Trash2 size={18} />
-                    </button>
-                  </div>
-                )}
-              </div>
-            );
-          })}
         </div>
       </section>
 

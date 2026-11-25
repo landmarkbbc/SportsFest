@@ -23,6 +23,7 @@ import {
   BracketSlotSnapshot,
   DEFAULT_POINTS_CHAMPION,
   DEFAULT_POINTS_PER_MATCH_WIN,
+  EventProgram,
   Game,
   Player,
   SEED_GAMES,
@@ -275,6 +276,56 @@ export function subscribeSettings(
       }
     }
   );
+}
+
+export function subscribeProgram(
+  onData: (program: EventProgram | null) => void,
+  onError: (error: Error) => void
+): () => void {
+  const ref = doc(db, 'settings', 'program');
+  return onSnapshot(
+    ref,
+    { includeMetadataChanges: true },
+    (snapshot) => {
+      if (!snapshot.exists()) {
+        onData(null);
+      } else {
+        const data = snapshot.data() as Partial<EventProgram>;
+        onData({
+          rows: Array.isArray(data.rows) ? data.rows : [],
+          endTime: typeof data.endTime === 'string' ? data.endTime : '16:00',
+          updatedAt: data.updatedAt,
+        });
+      }
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.GET, 'settings/program');
+      } catch (e) {
+        onError(e instanceof Error ? e : new Error(String(e)));
+      }
+    }
+  );
+}
+
+export async function saveProgram(program: EventProgram): Promise<void> {
+  const sortedRows = program.rows
+    .map((r) => ({
+      id: r.id,
+      start: r.start.trim(),
+      activity: r.activity.trim(),
+    }))
+    .sort((a, b) => a.start.localeCompare(b.start));
+
+  try {
+    await setDoc(doc(db, 'settings', 'program'), {
+      rows: sortedRows,
+      endTime: program.endTime.trim(),
+      updatedAt: Date.now(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, 'settings/program');
+  }
 }
 
 // Settings & PINs
