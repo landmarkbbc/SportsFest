@@ -28,7 +28,7 @@ service cloud.firestore {
     // Game schema validation
     function isValidGame(data, gameId) {
       return data.keys().hasAll(['id', 'name', 'type', 'eligibility', 'session', 'iconKey', 'createdAt'])
-        && data.keys().hasOnly(['id', 'name', 'type', 'eligibility', 'session', 'iconKey', 'usesSkillLevel', 'hasDivisions', 'minPlayersPerTeam', 'pointsPerMatchWin', 'pointsChampion', 'head', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'name', 'type', 'eligibility', 'session', 'iconKey', 'usesSkillLevel', 'hasDivisions', 'minPlayersPerTeam', 'pointsPerMatchWin', 'pointsChampion', 'allowsDraw', 'head', 'createdAt', 'updatedAt'])
         && data.id == gameId
         && isValidId(data.id)
         && data.name is string
@@ -43,6 +43,7 @@ service cloud.firestore {
         && (!('minPlayersPerTeam' in data) || data.minPlayersPerTeam == null || (data.minPlayersPerTeam is int && data.minPlayersPerTeam >= 1 && data.minPlayersPerTeam <= 99))
         && (!('pointsPerMatchWin' in data) || (data.pointsPerMatchWin is int && data.pointsPerMatchWin >= 0 && data.pointsPerMatchWin <= 99))
         && (!('pointsChampion' in data) || (data.pointsChampion is int && data.pointsChampion >= 0 && data.pointsChampion <= 99))
+        && (!('allowsDraw' in data) || data.allowsDraw is bool)
         && (!('head' in data) || data.head == null || (data.head is string && data.head.size() <= 40))
         && data.createdAt is int
         && data.createdAt > 0
@@ -105,18 +106,19 @@ service cloud.firestore {
     function isValidBracketMatch(item) {
       return item is map
         && item.keys().hasAll(['id', 'round', 'a', 'b', 'winner', 'bye', 'sameTeam', 'decidedBy', 'decidedAt'])
-        && item.keys().hasOnly(['id', 'round', 'a', 'b', 'winner', 'bye', 'sameTeam', 'decidedBy', 'decidedAt'])
+        && item.keys().hasOnly(['id', 'round', 'a', 'b', 'winner', 'bye', 'sameTeam', 'decidedBy', 'decidedAt', 'drawCount'])
         && isValidId(item.id)
         && item.round is int
         && item.round >= 1
         && item.round <= 100
         && (item.a == null || isValidBracketSnapshot(item.a))
         && (item.b == null || isValidBracketSnapshot(item.b))
-        && (item.winner == null || item.winner in ['a', 'b'])
+        && (item.winner == null || item.winner in ['a', 'b', 'draw'])
         && item.bye is bool
         && item.sameTeam is bool
         && (item.decidedBy == null || (item.decidedBy is string && item.decidedBy.size() >= 1 && item.decidedBy.size() <= 40))
-        && (item.decidedAt == null || (item.decidedAt is int && item.decidedAt > 0));
+        && (item.decidedAt == null || (item.decidedAt is int && item.decidedAt > 0))
+        && (!('drawCount' in item) || (item.drawCount is int && item.drawCount >= 0 && item.drawCount <= 99));
     }
 
     function isValidBracket(data) {
@@ -192,7 +194,7 @@ service cloud.firestore {
         && isValidGame(incoming(), gameId)
         && incoming().id == existing().id
         && incoming().createdAt == existing().createdAt
-        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'type', 'eligibility', 'session', 'iconKey', 'usesSkillLevel', 'hasDivisions', 'minPlayersPerTeam', 'pointsPerMatchWin', 'pointsChampion', 'head', 'updatedAt']);
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'type', 'eligibility', 'session', 'iconKey', 'usesSkillLevel', 'hasDivisions', 'minPlayersPerTeam', 'pointsPerMatchWin', 'pointsChampion', 'allowsDraw', 'head', 'updatedAt']);
       allow delete: if isSignedIn() && isValidId(gameId);
     }
 

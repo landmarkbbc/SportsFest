@@ -78,6 +78,7 @@ export function GameFormModal({
   const [iconKey, setIconKey] = useState<SportIconKey | null>(null);
   const [usesSkillLevel, setUsesSkillLevel] = useState(false);
   const [hasDivisions, setHasDivisions] = useState(false);
+  const [allowsDraw, setAllowsDraw] = useState(false);
   const [minPlayersInput, setMinPlayersInput] = useState('');
   const [head, setHead] = useState('');
   const [saving, setSaving] = useState(false);
@@ -92,6 +93,7 @@ export function GameFormModal({
       setIconKey(editingGame.iconKey);
       setUsesSkillLevel(editingGame.usesSkillLevel);
       setHasDivisions(editingGame.hasDivisions);
+      setAllowsDraw(Boolean(editingGame.allowsDraw));
       setMinPlayersInput(
         editingGame.minPlayersPerTeam !== null && editingGame.minPlayersPerTeam !== undefined
           ? String(editingGame.minPlayersPerTeam)
@@ -106,6 +108,7 @@ export function GameFormModal({
       setIconKey(null);
       setUsesSkillLevel(false);
       setHasDivisions(false);
+      setAllowsDraw(false);
       setMinPlayersInput('');
       setHead('');
     }
@@ -128,6 +131,7 @@ export function GameFormModal({
     setType(nextType);
     if (nextType !== 'individual') {
       setHasDivisions(false);
+      setAllowsDraw(false);
     }
     if (nextType !== 'team') {
       setMinPlayersInput('');
@@ -185,6 +189,7 @@ export function GameFormModal({
         usesSkillLevel: effectiveUsesSkill,
         hasDivisions: effectiveHasDivisions,
         minPlayersPerTeam,
+        allowsDraw: type === 'individual' ? allowsDraw : false,
         head: cleanHead || null,
       });
       onClose();
@@ -354,6 +359,16 @@ export function GameFormModal({
                 description="Separate L1, L2, and L3 brackets so players compete within their division."
                 checked={hasDivisions}
                 onChange={handleHasDivisionsChange}
+              />
+            )}
+
+            {type === 'individual' && (
+              <ToggleSwitch
+                id="game-allows-draw"
+                label="Allow draws"
+                description="Allow matches to be recorded as a draw."
+                checked={allowsDraw}
+                onChange={setAllowsDraw}
               />
             )}
 

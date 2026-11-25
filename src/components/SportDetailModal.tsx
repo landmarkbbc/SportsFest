@@ -177,6 +177,11 @@ export function SportDetailView({
               {participants.length} {participants.length === 1 ? 'player' : 'players'}
             </span>
           </p>
+          {game.head && (
+            <p className="text-xs font-medium text-[#4ADE80] leading-snug break-words mt-1">
+              In-charge: {game.head}
+            </p>
+          )}
           {game.type === 'team' && game.minPlayersPerTeam && game.minPlayersPerTeam > 0 && (
             <p className="text-xs font-medium text-fg mt-1.5 tabular-nums">
               Minimum {game.minPlayersPerTeam}{' '}

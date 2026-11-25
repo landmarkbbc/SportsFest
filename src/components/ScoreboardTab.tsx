@@ -1,5 +1,6 @@
 import { Trophy } from 'lucide-react';
 import { ScoreboardData, ScoreboardSportRow } from '../hooks/useScoreboard';
+import { formatPoints } from '../utils/bracket';
 import { SportIcon } from './SportIcons';
 
 interface ScoreboardTabProps {
@@ -47,13 +48,13 @@ export function ScoreboardTab({ loading, scoreboard }: ScoreboardTabProps) {
     );
   }
 
-  const diff = scoreboard.blueTotal - scoreboard.redTotal;
+  const diff = Math.round((scoreboard.blueTotal - scoreboard.redTotal) * 10) / 10;
   const leadText =
     diff === 0
       ? 'Tied'
       : diff > 0
-        ? `Blue leads by ${diff}`
-        : `Red leads by ${Math.abs(diff)}`;
+        ? `Blue leads by ${formatPoints(diff)}`
+        : `Red leads by ${formatPoints(Math.abs(diff))}`;
 
   return (
     <div className="space-y-6">
@@ -69,7 +70,7 @@ export function ScoreboardTab({ loading, scoreboard }: ScoreboardTabProps) {
               <span>Blue</span>
             </div>
             <p className="text-[36px] sm:text-[42px] font-bold leading-none text-blue-light tabular-nums mt-2">
-              {scoreboard.blueTotal}
+              {formatPoints(scoreboard.blueTotal)}
             </p>
           </div>
 
@@ -79,7 +80,7 @@ export function ScoreboardTab({ loading, scoreboard }: ScoreboardTabProps) {
               <span>Red</span>
             </div>
             <p className="text-[36px] sm:text-[42px] font-bold leading-none text-red-light tabular-nums mt-2">
-              {scoreboard.redTotal}
+              {formatPoints(scoreboard.redTotal)}
             </p>
           </div>
         </div>
@@ -136,7 +137,7 @@ export function ScoreboardTab({ loading, scoreboard }: ScoreboardTabProps) {
                       <span>{isBlue ? 'Blue' : 'Red'}</span>
                     </span>
                     <span className="px-2 py-0.5 rounded-md bg-nested border border-edge text-xs font-semibold text-fg tabular-nums">
-                      +{row.pointsAwarded} pts
+                      +{formatPoints(row.pointsAwarded)} pts
                     </span>
                   </div>
                 </div>
@@ -176,11 +177,11 @@ export function ScoreboardTab({ loading, scoreboard }: ScoreboardTabProps) {
                 <div className="flex items-center justify-between pt-2 border-t border-edge text-xs tabular-nums">
                   <span className="inline-flex items-center gap-1.5 font-semibold text-blue-light">
                     <span className="w-2 h-2 rounded-full bg-blue-team" aria-hidden="true" />
-                    <span>Blue {row.bluePoints}</span>
+                    <span>Blue {formatPoints(row.bluePoints)}</span>
                   </span>
                   <span className="inline-flex items-center gap-1.5 font-semibold text-red-light">
                     <span className="w-2 h-2 rounded-full bg-red-team" aria-hidden="true" />
-                    <span>Red {row.redPoints}</span>
+                    <span>Red {formatPoints(row.redPoints)}</span>
                   </span>
                 </div>
               </div>

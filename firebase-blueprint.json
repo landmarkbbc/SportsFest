@@ -52,6 +52,10 @@
           "type": "integer",
           "description": "Points awarded to the champion's team when the bracket finishes (0-99, default 3)."
         },
+        "allowsDraw": {
+          "type": "boolean",
+          "description": "Whether individual game matches can end in a draw."
+        },
         "head": {
           "type": "string",
           "maxLength": 40,

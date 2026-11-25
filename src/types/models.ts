@@ -53,6 +53,7 @@ export interface Game {
   minPlayersPerTeam: number | null;
   pointsPerMatchWin: number;
   pointsChampion: number;
+  allowsDraw: boolean;
   head?: string | null;
   createdAt: number;
   updatedAt?: number;
@@ -132,11 +133,12 @@ export interface BracketMatch {
   round: number;
   a: BracketSlotSnapshot | null;
   b: BracketSlotSnapshot | null;
-  winner: 'a' | 'b' | null;
+  winner: 'a' | 'b' | 'draw' | null;
   bye: boolean;
   sameTeam: boolean;
   decidedBy: string | null;
   decidedAt: number | null;
+  drawCount?: number;
 }
 
 export interface Bracket {
@@ -217,19 +219,23 @@ export function getDefaultGameMinPlayersPerTeam(name: string): number | null {
   return name.toLowerCase().includes('basketball') ? 5 : null;
 }
 
+export function getDefaultGameAllowsDraw(name: string): boolean {
+  return name.toLowerCase().includes('chess');
+}
+
 export const DEFAULT_POINTS_PER_MATCH_WIN = 1;
 export const DEFAULT_POINTS_CHAMPION = 3;
 
 export const SEED_GAMES: Array<Omit<Game, 'createdAt' | 'updatedAt'>> = [
-  { id: 'chess', name: 'Chess', type: 'individual', eligibility: 'everyone', session: 'morning', iconKey: 'pawn', usesSkillLevel: true, hasDivisions: true, minPlayersPerTeam: null, pointsPerMatchWin: 1, pointsChampion: 3 },
-  { id: 'scrabble', name: 'Scrabble', type: 'individual', eligibility: 'everyone', session: 'morning', iconKey: 'tileS', usesSkillLevel: false, hasDivisions: false, minPlayersPerTeam: null, pointsPerMatchWin: 1, pointsChampion: 3 },
-  { id: 'sungka', name: 'Sungka', type: 'individual', eligibility: 'everyone', session: 'morning', iconKey: 'conch', usesSkillLevel: false, hasDivisions: false, minPlayersPerTeam: null, pointsPerMatchWin: 1, pointsChampion: 3 },
-  { id: 'word-factory', name: 'Word Factory', type: 'individual', eligibility: 'everyone', session: 'morning', iconKey: 'cubeW', usesSkillLevel: false, hasDivisions: false, minPlayersPerTeam: null, pointsPerMatchWin: 1, pointsChampion: 3 },
-  { id: 'game-of-the-generals', name: 'Game of the Generals', type: 'individual', eligibility: 'everyone', session: 'morning', iconKey: 'stars3', usesSkillLevel: false, hasDivisions: false, minPlayersPerTeam: null, pointsPerMatchWin: 1, pointsChampion: 3 },
-  { id: 'table-tennis', name: 'Table Tennis', type: 'individual', eligibility: 'everyone', session: 'afternoon', iconKey: 'paddle', usesSkillLevel: false, hasDivisions: false, minPlayersPerTeam: null, pointsPerMatchWin: 1, pointsChampion: 3 },
-  { id: 'badminton', name: 'Badminton', type: 'individual', eligibility: 'everyone', session: 'afternoon', iconKey: 'shuttlecock', usesSkillLevel: false, hasDivisions: false, minPlayersPerTeam: null, pointsPerMatchWin: 1, pointsChampion: 3 },
-  { id: 'darts', name: 'Darts', type: 'pairs', eligibility: 'everyone', session: 'afternoon', iconKey: 'dartboard', usesSkillLevel: false, hasDivisions: false, minPlayersPerTeam: null, pointsPerMatchWin: 1, pointsChampion: 3 },
-  { id: 'volleyball-men', name: 'Volleyball - Men', type: 'team', eligibility: 'men', session: 'afternoon', iconKey: 'volleyball', usesSkillLevel: false, hasDivisions: false, minPlayersPerTeam: null, pointsPerMatchWin: 1, pointsChampion: 3 },
-  { id: 'volleyball-ladies', name: 'Volleyball - Ladies', type: 'team', eligibility: 'women', session: 'afternoon', iconKey: 'volleyball', usesSkillLevel: false, hasDivisions: false, minPlayersPerTeam: null, pointsPerMatchWin: 1, pointsChampion: 3 },
-  { id: 'basketball-men', name: 'Basketball - Men', type: 'team', eligibility: 'men', session: 'afternoon', iconKey: 'basketball', usesSkillLevel: true, hasDivisions: false, minPlayersPerTeam: 5, pointsPerMatchWin: 1, pointsChampion: 3 },
+  { id: 'chess', name: 'Chess', type: 'individual', eligibility: 'everyone', session: 'morning', iconKey: 'pawn', usesSkillLevel: true, hasDivisions: true, minPlayersPerTeam: null, pointsPerMatchWin: 1, pointsChampion: 3, allowsDraw: true },
+  { id: 'scrabble', name: 'Scrabble', type: 'individual', eligibility: 'everyone', session: 'morning', iconKey: 'tileS', usesSkillLevel: false, hasDivisions: false, minPlayersPerTeam: null, pointsPerMatchWin: 1, pointsChampion: 3, allowsDraw: false },
+  { id: 'sungka', name: 'Sungka', type: 'individual', eligibility: 'everyone', session: 'morning', iconKey: 'conch', usesSkillLevel: false, hasDivisions: false, minPlayersPerTeam: null, pointsPerMatchWin: 1, pointsChampion: 3, allowsDraw: false },
+  { id: 'word-factory', name: 'Word Factory', type: 'individual', eligibility: 'everyone', session: 'morning', iconKey: 'cubeW', usesSkillLevel: false, hasDivisions: false, minPlayersPerTeam: null, pointsPerMatchWin: 1, pointsChampion: 3, allowsDraw: false },
+  { id: 'game-of-the-generals', name: 'Game of the Generals', type: 'individual', eligibility: 'everyone', session: 'morning', iconKey: 'stars3', usesSkillLevel: false, hasDivisions: false, minPlayersPerTeam: null, pointsPerMatchWin: 1, pointsChampion: 3, allowsDraw: false },
+  { id: 'table-tennis', name: 'Table Tennis', type: 'individual', eligibility: 'everyone', session: 'afternoon', iconKey: 'paddle', usesSkillLevel: false, hasDivisions: false, minPlayersPerTeam: null, pointsPerMatchWin: 1, pointsChampion: 3, allowsDraw: false },
+  { id: 'badminton', name: 'Badminton', type: 'individual', eligibility: 'everyone', session: 'afternoon', iconKey: 'shuttlecock', usesSkillLevel: false, hasDivisions: false, minPlayersPerTeam: null, pointsPerMatchWin: 1, pointsChampion: 3, allowsDraw: false },
+  { id: 'darts', name: 'Darts', type: 'pairs', eligibility: 'everyone', session: 'afternoon', iconKey: 'dartboard', usesSkillLevel: false, hasDivisions: false, minPlayersPerTeam: null, pointsPerMatchWin: 1, pointsChampion: 3, allowsDraw: false },
+  { id: 'volleyball-men', name: 'Volleyball - Men', type: 'team', eligibility: 'men', session: 'afternoon', iconKey: 'volleyball', usesSkillLevel: false, hasDivisions: false, minPlayersPerTeam: null, pointsPerMatchWin: 1, pointsChampion: 3, allowsDraw: false },
+  { id: 'volleyball-ladies', name: 'Volleyball - Ladies', type: 'team', eligibility: 'women', session: 'afternoon', iconKey: 'volleyball', usesSkillLevel: false, hasDivisions: false, minPlayersPerTeam: null, pointsPerMatchWin: 1, pointsChampion: 3, allowsDraw: false },
+  { id: 'basketball-men', name: 'Basketball - Men', type: 'team', eligibility: 'men', session: 'afternoon', iconKey: 'basketball', usesSkillLevel: true, hasDivisions: false, minPlayersPerTeam: 5, pointsPerMatchWin: 1, pointsChampion: 3, allowsDraw: false },
 ];

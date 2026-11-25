@@ -27,13 +27,16 @@ import {
   decideBracketMatch,
   deleteBracket,
   pickBracketChampion,
+  recordBracketDraw,
   undoBracketMatch,
+  undoEliminationDraw,
 } from '../services/db';
 import {
   AlreadyDecidedError,
   DIVISION_LEVELS,
   canUndoMatch,
   computeRoundRobinStandings,
+  formatPoints,
   getBracketDocId,
   getGamePairingMode,
   getGameParticipantsSummary,
@@ -51,11 +54,18 @@ interface BracketViewProps {
   onShowToast: (type: 'success' | 'error', text: string) => void;
 }
 
-interface PendingWinnerSelection {
-  matchId: string;
-  side: 'a' | 'b';
-  slot: BracketSlotSnapshot;
-}
+type PendingMatchDecision =
+  | {
+      kind: 'winner';
+      matchId: string;
+      side: 'a' | 'b';
+      slot: BracketSlotSnapshot;
+    }
+  | {
+      kind: 'draw';
+      matchId: string;
+      match: BracketMatch;
+    };
 
 interface EliminationColumnItem {
   round: number;
@@ -184,26 +194,34 @@ function MatchCard({
   match,
   matchNumber,
   showLevel,
+  allowsDraw,
   canScore,
   isAdmin,
   canUndo,
   undoing,
   leadPlayerId,
   onPickWinner,
+  onPickDraw,
   onUndo,
+  onUndoDraw,
 }: {
   match: BracketMatch;
   matchNumber: number;
   showLevel: boolean;
+  allowsDraw: boolean;
   canScore: boolean;
   isAdmin: boolean;
   canUndo: boolean;
   undoing: boolean;
   leadPlayerId?: string;
   onPickWinner: (matchId: string, side: 'a' | 'b', slot: BracketSlotSnapshot) => void;
+  onPickDraw: (match: BracketMatch) => void;
   onUndo: (matchId: string) => void;
+  onUndoDraw: (matchId: string) => void;
 }) {
   const isLocked = match.winner !== null;
+  const isDrawWinner = match.winner === 'draw';
+  const drawCount = match.drawCount ?? 0;
   const swapOrder = Boolean(leadPlayerId && match.b?.playerId === leadPlayerId);
   const firstSide: 'a' | 'b' = swapOrder ? 'b' : 'a';
   const secondSide: 'a' | 'b' = swapOrder ? 'a' : 'b';
@@ -227,6 +245,11 @@ function MatchCard({
               Bye
             </span>
           )}
+          {isDrawWinner && (
+            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-status-amber-bg border border-status-amber-edge text-status-amber-fg">
+              Draw
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           {isLocked && (
@@ -243,6 +266,17 @@ function MatchCard({
               <span>{undoing ? 'Undoing...' : 'Undo'}</span>
             </button>
           )}
+          {isAdmin && !isLocked && drawCount > 0 && (
+            <button
+              type="button"
+              disabled={undoing}
+              onClick={() => onUndoDraw(match.id)}
+              className="min-h-[28px] px-2 py-0.5 rounded-lg text-xs font-medium text-fg-muted hover:text-fg hover:bg-surface border border-transparent hover:border-edge inline-flex items-center gap-1 transition-colors duration-150 disabled:opacity-50"
+            >
+              <RotateCcw size={12} />
+              <span>{undoing ? 'Undoing...' : 'Undo draw'}</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -251,7 +285,7 @@ function MatchCard({
           slot={firstSlot}
           showLevel={showLevel}
           isWinner={match.winner === firstSide}
-          isLoser={match.winner !== null && match.winner !== firstSide}
+          isLoser={match.winner !== null && !isDrawWinner && match.winner !== firstSide}
           isLocked={isLocked}
           canScore={canScore}
           onPick={() => {
@@ -264,7 +298,7 @@ function MatchCard({
           slot={secondSlot}
           showLevel={showLevel}
           isWinner={match.winner === secondSide}
-          isLoser={match.winner !== null && match.winner !== secondSide}
+          isLoser={match.winner !== null && !isDrawWinner && match.winner !== secondSide}
           isLocked={isLocked}
           canScore={canScore}
           onPick={() => {
@@ -274,6 +308,24 @@ function MatchCard({
           }}
         />
       </div>
+
+      {!isLocked && drawCount > 0 && (
+        <div>
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-status-amber-bg border border-status-amber-edge text-status-amber-fg">
+            Draw x{drawCount} - replay, swap colors
+          </span>
+        </div>
+      )}
+
+      {allowsDraw && canScore && !isLocked && !match.bye && (
+        <button
+          type="button"
+          onClick={() => onPickDraw(match)}
+          className="w-full min-h-[34px] px-3 py-1 rounded-lg border border-edge bg-transparent hover:bg-surface text-xs font-medium text-fg-muted hover:text-fg transition-colors duration-150"
+        >
+          Draw
+        </button>
+      )}
     </div>
   );
 }
@@ -321,9 +373,9 @@ export function BracketView({
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
 
-  const [pendingWinner, setPendingWinner] =
-    useState<PendingWinnerSelection | null>(null);
-  const [confirmingWinner, setConfirmingWinner] = useState(false);
+  const [pendingDecision, setPendingDecision] =
+    useState<PendingMatchDecision | null>(null);
+  const [confirmingDecision, setConfirmingDecision] = useState(false);
   const [undoingMatchId, setUndoingMatchId] = useState<string | null>(null);
   const [pickingChampionId, setPickingChampionId] = useState<string | null>(null);
 
@@ -496,7 +548,7 @@ export function BracketView({
       setSelectedPlayerId(null);
       setViewedElimRound(activeRound);
       setAnimatedNewRound(null);
-      setPendingWinner(null);
+      setPendingDecision(null);
       setResetConfirmOpen(false);
       if (bracket?.format === 'elimination' && activeRound > 1) {
         window.requestAnimationFrame(() => {
@@ -558,6 +610,7 @@ export function BracketView({
 
   const canScore = role === 'admin' || role === 'scorer';
   const isAdmin = role === 'admin';
+  const allowsDraw = Boolean(game.allowsDraw) && bracket?.format !== 'teammatch';
 
   // Empty states when no bracket exists
   if (!bracket) {
@@ -719,22 +772,27 @@ export function BracketView({
     0
   );
 
-  async function handleConfirmWinner() {
-    if (!pendingWinner || confirmingWinner) return;
-    setConfirmingWinner(true);
+  async function handleConfirmDecision() {
+    if (!pendingDecision || confirmingDecision) return;
+    setConfirmingDecision(true);
     try {
-      await decideBracketMatch(
-        bracketDocId,
-        pendingWinner.matchId,
-        pendingWinner.side,
-        role === 'admin' ? 'Admin' : 'Scorer',
-        pairingMode
-      );
-      setPendingWinner(null);
+      const actor = role === 'admin' ? 'Admin' : 'Scorer';
+      if (pendingDecision.kind === 'draw') {
+        await recordBracketDraw(bracketDocId, pendingDecision.matchId, actor);
+      } else {
+        await decideBracketMatch(
+          bracketDocId,
+          pendingDecision.matchId,
+          pendingDecision.side,
+          actor,
+          pairingMode
+        );
+      }
+      setPendingDecision(null);
     } catch (err) {
       if (err instanceof AlreadyDecidedError) {
         onShowToast('error', 'Already decided by another scorer');
-        setPendingWinner(null);
+        setPendingDecision(null);
       } else {
         onShowToast(
           'error',
@@ -742,7 +800,7 @@ export function BracketView({
         );
       }
     } finally {
-      setConfirmingWinner(false);
+      setConfirmingDecision(false);
     }
   }
 
@@ -756,6 +814,22 @@ export function BracketView({
       onShowToast(
         'error',
         err instanceof Error ? err.message : 'Could not undo match.'
+      );
+    } finally {
+      setUndoingMatchId(null);
+    }
+  }
+
+  async function handleUndoDraw(matchId: string) {
+    if (!isAdmin || undoingMatchId) return;
+    setUndoingMatchId(matchId);
+    try {
+      await undoEliminationDraw(bracketDocId, matchId);
+      onShowToast('success', 'Draw undone.');
+    } catch (err) {
+      onShowToast(
+        'error',
+        err instanceof Error ? err.message : 'Could not undo draw.'
       );
     } finally {
       setUndoingMatchId(null);
@@ -820,12 +894,12 @@ export function BracketView({
     setViewedElimRound(closestRound);
   }
 
-  const maxStandingsWins = standings[0]?.wins ?? 0;
+  const maxStandingsPts = standings[0]?.pts ?? 0;
 
-  // Confirm Winner & Reset Bracket Modals (shared across main view and Player Matches page)
+  // Confirm Winner / Draw & Reset Bracket Modals (shared across main view and Player Matches page)
   const sharedModals = (
     <>
-      {pendingWinner && (
+      {pendingDecision && (
         <div
           className="fixed inset-0 z-50 bg-overlay flex items-end sm:items-center justify-center p-0 sm:p-4"
           role="dialog"
@@ -839,30 +913,39 @@ export function BracketView({
                   id="confirm-winner-title"
                   className="text-[16px] font-semibold text-fg break-words"
                 >
-                  {pendingWinner.slot.name} wins?
+                  {pendingDecision.kind === 'draw'
+                    ? 'Record a draw?'
+                    : `${pendingDecision.slot.name} wins?`}
                 </h2>
-                <div className="flex items-center gap-1.5 mt-1">
-                  <span
-                    className={`w-2.5 h-2.5 rounded-full ${
-                      pendingWinner.slot.team === 'blue'
-                        ? 'bg-blue-team'
-                        : 'bg-red-team'
-                    }`}
-                    aria-hidden="true"
-                  />
-                  <span className="text-xs text-fg-muted">
-                    {pendingWinner.slot.team === 'blue' ? 'Blue Team' : 'Red Team'}
-                    {pendingWinner.slot.dept ? ` · ${pendingWinner.slot.dept}` : ''}
-                    {game.usesSkillLevel && pendingWinner.slot.level !== null
-                      ? ` · L${pendingWinner.slot.level}`
-                      : ''}
-                  </span>
-                </div>
+                {pendingDecision.kind === 'draw' ? (
+                  <p className="text-xs text-fg-muted mt-1 break-words">
+                    {pendingDecision.match.a?.name ?? 'Player A'} vs{' '}
+                    {pendingDecision.match.b?.name ?? 'Player B'}
+                  </p>
+                ) : (
+                  <div className="flex items-center gap-1.5 mt-1">
+                    <span
+                      className={`w-2.5 h-2.5 rounded-full ${
+                        pendingDecision.slot.team === 'blue'
+                          ? 'bg-blue-team'
+                          : 'bg-red-team'
+                      }`}
+                      aria-hidden="true"
+                    />
+                    <span className="text-xs text-fg-muted">
+                      {pendingDecision.slot.team === 'blue' ? 'Blue Team' : 'Red Team'}
+                      {pendingDecision.slot.dept ? ` · ${pendingDecision.slot.dept}` : ''}
+                      {game.usesSkillLevel && pendingDecision.slot.level !== null
+                        ? ` · L${pendingDecision.slot.level}`
+                        : ''}
+                    </span>
+                  </div>
+                )}
               </div>
               <button
                 type="button"
-                disabled={confirmingWinner}
-                onClick={() => setPendingWinner(null)}
+                disabled={confirmingDecision}
+                onClick={() => setPendingDecision(null)}
                 aria-label="Close"
                 className="min-w-[44px] min-h-[44px] -mr-2 -mt-2 flex items-center justify-center text-fg-muted hover:text-fg disabled:opacity-50"
               >
@@ -873,19 +956,19 @@ export function BracketView({
             <div className="flex items-center gap-3">
               <button
                 type="button"
-                disabled={confirmingWinner}
-                onClick={() => setPendingWinner(null)}
+                disabled={confirmingDecision}
+                onClick={() => setPendingDecision(null)}
                 className="flex-1 min-h-[44px] px-4 py-2 rounded-xl border border-edge bg-transparent text-sm font-medium text-fg hover:bg-nested transition-colors duration-150 disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                disabled={confirmingWinner}
-                onClick={() => void handleConfirmWinner()}
+                disabled={confirmingDecision}
+                onClick={() => void handleConfirmDecision()}
                 className="flex-1 min-h-[44px] px-4 py-2 rounded-xl bg-primary text-primary-fg text-sm font-medium hover:bg-primary-hover transition-colors duration-150 disabled:opacity-50"
               >
-                {confirmingWinner ? 'Saving...' : 'Confirm'}
+                {confirmingDecision ? 'Saving...' : 'Confirm'}
               </button>
             </div>
           </div>
@@ -938,7 +1021,7 @@ export function BracketView({
 
   // Round Robin "Player matches" subpage (keeps bottom nav visible)
   if (bracket.format === 'roundrobin' && selectedPlayerStanding) {
-    const { player, wins, losses } = selectedPlayerStanding;
+    const { player, wins, draws, losses, pts } = selectedPlayerStanding;
 
     return (
       <div className="space-y-4">
@@ -988,9 +1071,11 @@ export function BracketView({
 
           <div className="px-3 py-2 rounded-xl bg-nested border border-edge text-center shrink-0">
             <p className="text-base font-semibold text-fg tabular-nums leading-tight">
-              {wins}-{losses}
+              {formatPoints(pts)} pts
             </p>
-            <p className="text-[11px] font-medium text-fg-muted mt-0.5">W-L</p>
+            <p className="text-[11px] font-medium text-fg-muted tabular-nums mt-0.5">
+              {wins}-{draws}-{losses}
+            </p>
           </div>
         </div>
 
@@ -1008,15 +1093,20 @@ export function BracketView({
                     match={match}
                     matchNumber={roundRobinMatchNumberById.get(match.id) ?? 1}
                     showLevel={game.usesSkillLevel}
+                    allowsDraw={allowsDraw}
                     canScore={canScore}
                     isAdmin={isAdmin}
                     canUndo={canUndoMatch(bracket, match)}
                     undoing={undoingMatchId === match.id}
                     leadPlayerId={player.playerId}
                     onPickWinner={(matchId, side, slot) =>
-                      setPendingWinner({ matchId, side, slot })
+                      setPendingDecision({ kind: 'winner', matchId, side, slot })
+                    }
+                    onPickDraw={(m) =>
+                      setPendingDecision({ kind: 'draw', matchId: m.id, match: m })
                     }
                     onUndo={(matchId) => void handleUndo(matchId)}
+                    onUndoDraw={(matchId) => void handleUndoDraw(matchId)}
                   />
                 ))}
               </div>
@@ -1353,14 +1443,19 @@ export function BracketView({
                           match={match}
                           matchNumber={idx + 1}
                           showLevel={game.usesSkillLevel}
+                          allowsDraw={allowsDraw}
                           canScore={canScore}
                           isAdmin={isAdmin}
                           canUndo={canUndoMatch(bracket, match)}
                           undoing={undoingMatchId === match.id}
                           onPickWinner={(matchId, side, slot) =>
-                            setPendingWinner({ matchId, side, slot })
+                            setPendingDecision({ kind: 'winner', matchId, side, slot })
+                          }
+                          onPickDraw={(m) =>
+                            setPendingDecision({ kind: 'draw', matchId: m.id, match: m })
                           }
                           onUndo={(matchId) => void handleUndo(matchId)}
+                          onUndoDraw={(matchId) => void handleUndoDraw(matchId)}
                         />
                       ))}
                     </div>
@@ -1419,27 +1514,33 @@ export function BracketView({
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="border-b border-edge text-xs font-semibold text-fg-muted">
-                      <th className="sticky top-14 z-10 bg-surface border-b border-edge py-2.5 pl-3 pr-2 w-9 first:rounded-tl-xl">
+                      <th className="sticky top-14 z-10 bg-surface border-b border-edge py-2.5 pl-3 pr-1.5 w-8 first:rounded-tl-xl">
                         #
                       </th>
-                      <th className="sticky top-14 z-10 bg-surface border-b border-edge py-2.5 px-2">
+                      <th className="sticky top-14 z-10 bg-surface border-b border-edge py-2.5 px-1.5">
                         Player
                       </th>
-                      <th className="sticky top-14 z-10 bg-surface border-b border-edge py-2.5 px-2 text-right w-10">
+                      <th className="sticky top-14 z-10 bg-surface border-b border-edge py-2.5 px-1.5 text-right w-8">
                         P
                       </th>
-                      <th className="sticky top-14 z-10 bg-surface border-b border-edge py-2.5 px-2 text-right w-10">
+                      <th className="sticky top-14 z-10 bg-surface border-b border-edge py-2.5 px-1.5 text-right w-8">
                         W
                       </th>
-                      <th className="sticky top-14 z-10 bg-surface border-b border-edge py-2.5 pl-2 pr-3 text-right w-10 last:rounded-tr-xl">
+                      <th className="sticky top-14 z-10 bg-surface border-b border-edge py-2.5 px-1.5 text-right w-8">
+                        D
+                      </th>
+                      <th className="sticky top-14 z-10 bg-surface border-b border-edge py-2.5 px-1.5 text-right w-8">
                         L
+                      </th>
+                      <th className="sticky top-14 z-10 bg-surface border-b border-edge py-2.5 pl-1.5 pr-3 text-right w-11 last:rounded-tr-xl">
+                        Pts
                       </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-edge">
                     {standings.map((row, idx) => {
-                      const played = row.wins + row.losses;
-                      const isLeader = maxStandingsWins > 0 && row.wins === maxStandingsWins;
+                      const played = row.wins + row.draws + row.losses;
+                      const isLeader = maxStandingsPts > 0 && row.pts === maxStandingsPts;
 
                       return (
                         <tr
@@ -1450,7 +1551,7 @@ export function BracketView({
                           }`}
                         >
                           <td
-                            className={`py-3 pl-3 pr-2 tabular-nums text-xs ${
+                            className={`py-3 pl-3 pr-1.5 tabular-nums text-xs ${
                               isLeader
                                 ? 'font-semibold text-fg border-l-2 border-l-fg'
                                 : 'font-medium text-fg-muted'
@@ -1458,7 +1559,7 @@ export function BracketView({
                           >
                             {idx + 1}
                           </td>
-                          <td className="py-3 px-2">
+                          <td className="py-3 px-1.5">
                             <button
                               type="button"
                               onClick={(e) => {
@@ -1495,14 +1596,20 @@ export function BracketView({
                               />
                             </button>
                           </td>
-                          <td className="py-3 px-2 text-right text-fg-muted tabular-nums">
+                          <td className="py-3 px-1.5 text-right text-fg-muted tabular-nums">
                             {played}
                           </td>
-                          <td className="py-3 px-2 text-right font-semibold text-fg tabular-nums">
+                          <td className="py-3 px-1.5 text-right text-fg tabular-nums">
                             {row.wins}
                           </td>
-                          <td className="py-3 pl-2 pr-3 text-right text-fg-muted tabular-nums">
+                          <td className="py-3 px-1.5 text-right text-fg-muted tabular-nums">
+                            {row.draws}
+                          </td>
+                          <td className="py-3 px-1.5 text-right text-fg-muted tabular-nums">
                             {row.losses}
+                          </td>
+                          <td className="py-3 pl-1.5 pr-3 text-right font-semibold text-fg tabular-nums">
+                            {formatPoints(row.pts)}
                           </td>
                         </tr>
                       );
@@ -1525,14 +1632,19 @@ export function BracketView({
                         match={match}
                         matchNumber={roundRobinMatchNumberById.get(match.id) ?? 1}
                         showLevel={game.usesSkillLevel}
+                        allowsDraw={allowsDraw}
                         canScore={canScore}
                         isAdmin={isAdmin}
                         canUndo={canUndoMatch(bracket, match)}
                         undoing={undoingMatchId === match.id}
                         onPickWinner={(matchId, side, slot) =>
-                          setPendingWinner({ matchId, side, slot })
+                          setPendingDecision({ kind: 'winner', matchId, side, slot })
+                        }
+                        onPickDraw={(m) =>
+                          setPendingDecision({ kind: 'draw', matchId: m.id, match: m })
                         }
                         onUndo={(matchId) => void handleUndo(matchId)}
+                        onUndoDraw={(matchId) => void handleUndoDraw(matchId)}
                       />
                     ))}
                   </div>
@@ -1554,14 +1666,19 @@ export function BracketView({
                   match={match}
                   matchNumber={idx + 1}
                   showLevel={game.usesSkillLevel}
+                  allowsDraw={false}
                   canScore={canScore}
                   isAdmin={isAdmin}
                   canUndo={canUndoMatch(bracket, match)}
                   undoing={undoingMatchId === match.id}
                   onPickWinner={(matchId, side, slot) =>
-                    setPendingWinner({ matchId, side, slot })
+                    setPendingDecision({ kind: 'winner', matchId, side, slot })
+                  }
+                  onPickDraw={(m) =>
+                    setPendingDecision({ kind: 'draw', matchId: m.id, match: m })
                   }
                   onUndo={(matchId) => void handleUndo(matchId)}
+                  onUndoDraw={(matchId) => void handleUndoDraw(matchId)}
                 />
               ))}
             </div>

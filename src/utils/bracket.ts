@@ -33,7 +33,14 @@ export interface GameParticipantsSummary {
 export interface RoundRobinStandingRow {
   player: BracketSlotSnapshot;
   wins: number;
+  draws: number;
   losses: number;
+  pts: number;
+}
+
+export function formatPoints(value: number): string {
+  const rounded = Math.round(value * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
 }
 
 export function getBracketDocId(gameId: string, division?: SkillLevel | null): string {
@@ -425,20 +432,37 @@ export function computeRoundRobinStandings(bracket: Bracket): RoundRobinStanding
 
   for (const match of bracket.matches) {
     if (match.a && !map.has(match.a.playerId)) {
-      map.set(match.a.playerId, { player: match.a, wins: 0, losses: 0 });
+      map.set(match.a.playerId, { player: match.a, wins: 0, draws: 0, losses: 0, pts: 0 });
     }
     if (match.b && !map.has(match.b.playerId)) {
-      map.set(match.b.playerId, { player: match.b, wins: 0, losses: 0 });
+      map.set(match.b.playerId, { player: match.b, wins: 0, draws: 0, losses: 0, pts: 0 });
     }
     if (match.winner && match.a && match.b) {
-      const winnerRow = map.get(match.winner === 'a' ? match.a.playerId : match.b.playerId);
-      const loserRow = map.get(match.winner === 'a' ? match.b.playerId : match.a.playerId);
-      if (winnerRow) winnerRow.wins += 1;
-      if (loserRow) loserRow.losses += 1;
+      if (match.winner === 'draw') {
+        const rowA = map.get(match.a.playerId);
+        const rowB = map.get(match.b.playerId);
+        if (rowA) {
+          rowA.draws += 1;
+          rowA.pts += 0.5;
+        }
+        if (rowB) {
+          rowB.draws += 1;
+          rowB.pts += 0.5;
+        }
+      } else {
+        const winnerRow = map.get(match.winner === 'a' ? match.a.playerId : match.b.playerId);
+        const loserRow = map.get(match.winner === 'a' ? match.b.playerId : match.a.playerId);
+        if (winnerRow) {
+          winnerRow.wins += 1;
+          winnerRow.pts += 1;
+        }
+        if (loserRow) loserRow.losses += 1;
+      }
     }
   }
 
   return Array.from(map.values()).sort((x, y) => {
+    if (y.pts !== x.pts) return y.pts - x.pts;
     if (y.wins !== x.wins) return y.wins - x.wins;
     if (x.losses !== y.losses) return x.losses - y.losses;
     return x.player.name.localeCompare(y.player.name);
@@ -452,8 +476,8 @@ export function getRoundRobinTiedLeaders(bracket: Bracket): BracketSlotSnapshot[
   }
   const standings = computeRoundRobinStandings(bracket);
   if (standings.length === 0) return [];
-  const maxWins = standings[0].wins;
-  const tied = standings.filter((row) => row.wins === maxWins).map((row) => row.player);
+  const maxPts = standings[0].pts;
+  const tied = standings.filter((row) => row.pts === maxPts).map((row) => row.player);
   return tied.length > 1 ? tied : [];
 }
 
@@ -504,8 +528,8 @@ export function applyMatchDecision(
     const allDecided = updatedMatches.every((m) => m.winner !== null);
     if (allDecided) {
       const standings = computeRoundRobinStandings({ ...bracket, matches: updatedMatches });
-      const topWins = standings[0]?.wins ?? 0;
-      const leaders = standings.filter((s) => s.wins === topWins);
+      const topPts = standings[0]?.pts ?? 0;
+      const leaders = standings.filter((s) => s.pts === topPts);
       if (leaders.length === 1) {
         status = 'complete';
         championName = leaders[0].player.name;
@@ -550,6 +574,110 @@ export function applyMatchDecision(
     matches: updatedMatches,
     championName,
     championTeam,
+    updatedAt: now,
+  };
+}
+
+export function applyMatchDraw(
+  bracket: Bracket,
+  matchId: string,
+  decidedBy: string,
+  now: number = Date.now()
+): Bracket {
+  const idx = bracket.matches.findIndex((m) => m.id === matchId);
+  if (idx === -1) {
+    throw new Error('Match not found.');
+  }
+
+  const target = bracket.matches[idx];
+  if (target.bye) {
+    throw new Error('Cannot record a draw on a bye match.');
+  }
+  if (target.winner !== null) {
+    throw new AlreadyDecidedError();
+  }
+
+  if (bracket.format === 'roundrobin') {
+    const updatedMatches = bracket.matches.map((m, i) =>
+      i === idx
+        ? {
+            ...m,
+            winner: 'draw' as const,
+            decidedBy,
+            decidedAt: now,
+          }
+        : m
+    );
+
+    let status = bracket.status;
+    let championName = bracket.championName;
+    let championTeam = bracket.championTeam;
+
+    const allDecided = updatedMatches.every((m) => m.winner !== null);
+    if (allDecided) {
+      const standings = computeRoundRobinStandings({ ...bracket, matches: updatedMatches });
+      const topPts = standings[0]?.pts ?? 0;
+      const leaders = standings.filter((s) => s.pts === topPts);
+      if (leaders.length === 1) {
+        status = 'complete';
+        championName = leaders[0].player.name;
+        championTeam = leaders[0].player.team;
+      }
+    }
+
+    return {
+      ...bracket,
+      status,
+      matches: updatedMatches,
+      championName,
+      championTeam,
+      updatedAt: now,
+    };
+  }
+
+  if (bracket.format === 'elimination') {
+    const updatedMatches = bracket.matches.map((m, i) =>
+      i === idx
+        ? {
+            ...m,
+            drawCount: (m.drawCount ?? 0) + 1,
+          }
+        : m
+    );
+    return {
+      ...bracket,
+      matches: updatedMatches,
+      updatedAt: now,
+    };
+  }
+
+  throw new Error('Draws are not supported for this match format.');
+}
+
+export function applyEliminationDrawUndo(
+  bracket: Bracket,
+  matchId: string,
+  now: number = Date.now()
+): Bracket {
+  const idx = bracket.matches.findIndex((m) => m.id === matchId);
+  if (idx === -1) {
+    throw new Error('Match not found.');
+  }
+  const target = bracket.matches[idx];
+  if (target.winner !== null || (target.drawCount ?? 0) <= 0) {
+    throw new Error('Cannot undo draw on this match.');
+  }
+  const updatedMatches = bracket.matches.map((m, i) =>
+    i === idx
+      ? {
+          ...m,
+          drawCount: (m.drawCount ?? 0) - 1,
+        }
+      : m
+  );
+  return {
+    ...bracket,
+    matches: updatedMatches,
     updatedAt: now,
   };
 }

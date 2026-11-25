@@ -100,8 +100,8 @@ export function SportsTab({
               </p>
 
               {game.head && (
-                <p className="text-xs text-fg-muted leading-snug break-words">
-                  {game.head}
+                <p className="text-xs font-medium text-[#4ADE80] leading-snug break-words">
+                  In-charge: {game.head}
                 </p>
               )}
 

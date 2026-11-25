@@ -57,6 +57,14 @@ function computeBracketBreakdown(
   if (!isTeamGame && game.pointsPerMatchWin > 0) {
     for (const match of bracket.matches) {
       if (match.bye || match.sameTeam || match.winner === null) continue;
+      if (match.winner === 'draw') {
+        if (bracket.format === 'roundrobin') {
+          const half = game.pointsPerMatchWin / 2;
+          bluePoints += half;
+          redPoints += half;
+        }
+        continue;
+      }
       const winnerSnap = match.winner === 'a' ? match.a : match.b;
       if (!winnerSnap) continue;
       if (winnerSnap.team === 'blue') {

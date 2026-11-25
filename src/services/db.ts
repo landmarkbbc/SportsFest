@@ -28,6 +28,7 @@ import {
   Player,
   SEED_GAMES,
   TeamId,
+  getDefaultGameAllowsDraw,
   getDefaultGameHasDivisions,
   getDefaultGameIconKey,
   getDefaultGameMinPlayersPerTeam,
@@ -37,7 +38,9 @@ import {
 import {
   AlreadyDecidedError,
   PairingMode,
+  applyEliminationDrawUndo,
   applyMatchDecision,
+  applyMatchDraw,
   applyMatchUndo,
   pickRoundRobinChampionState,
 } from '../utils/bracket';
@@ -183,6 +186,11 @@ function normalizeGame(raw: Partial<Game> & { id: string; name: string }): Game 
       ? Math.max(0, Math.min(99, Math.trunc(raw.pointsChampion)))
       : DEFAULT_POINTS_CHAMPION;
 
+  const allowsDraw =
+    raw.allowsDraw !== undefined
+      ? Boolean(raw.allowsDraw)
+      : getDefaultGameAllowsDraw(raw.name);
+
   const trimmedHead = typeof raw.head === 'string' ? raw.head.trim().slice(0, 40) : '';
   const head = trimmedHead.length > 0 ? trimmedHead : null;
 
@@ -198,6 +206,7 @@ function normalizeGame(raw: Partial<Game> & { id: string; name: string }): Game 
     minPlayersPerTeam,
     pointsPerMatchWin,
     pointsChampion,
+    allowsDraw,
     head,
     createdAt: raw.createdAt ?? Date.now(),
     updatedAt: raw.updatedAt,
@@ -394,6 +403,7 @@ export type GameInput = Pick<
   | 'usesSkillLevel'
   | 'hasDivisions'
   | 'minPlayersPerTeam'
+  | 'allowsDraw'
   | 'head'
 >;
 
@@ -406,6 +416,7 @@ export async function createGame(input: GameInput): Promise<Game> {
     input.type === 'team' && input.minPlayersPerTeam && input.minPlayersPerTeam > 0
       ? Math.trunc(input.minPlayersPerTeam)
       : null;
+  const allowsDraw = input.type === 'individual' ? Boolean(input.allowsDraw) : false;
   const trimmedHead = typeof input.head === 'string' ? input.head.trim().slice(0, 40) : '';
   const head = trimmedHead.length > 0 ? trimmedHead : null;
 
@@ -421,6 +432,7 @@ export async function createGame(input: GameInput): Promise<Game> {
     minPlayersPerTeam,
     pointsPerMatchWin: DEFAULT_POINTS_PER_MATCH_WIN,
     pointsChampion: DEFAULT_POINTS_CHAMPION,
+    allowsDraw,
     head,
     createdAt: now,
     updatedAt: now,
@@ -446,6 +458,7 @@ export async function updateGame(
     updates.type === 'team' && updates.minPlayersPerTeam && updates.minPlayersPerTeam > 0
       ? Math.trunc(updates.minPlayersPerTeam)
       : null;
+  const allowsDraw = updates.type === 'individual' ? Boolean(updates.allowsDraw) : false;
   const trimmedHead = typeof updates.head === 'string' ? updates.head.trim().slice(0, 40) : '';
   const head = trimmedHead.length > 0 ? trimmedHead : null;
 
@@ -459,6 +472,7 @@ export async function updateGame(
       usesSkillLevel,
       hasDivisions,
       minPlayersPerTeam,
+      allowsDraw,
       head,
       updatedAt: Date.now(),
     });
@@ -746,6 +760,61 @@ export async function decideBracketMatch(
     if (error instanceof AlreadyDecidedError) {
       throw error;
     }
+    handleFirestoreError(error, OperationType.UPDATE, `brackets/${bracketDocId}`);
+  }
+}
+
+export async function recordBracketDraw(
+  bracketDocId: string,
+  matchId: string,
+  decidedBy: string
+): Promise<Bracket> {
+  const ref = doc(db, 'brackets', bracketDocId);
+  try {
+    return await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) {
+        throw new Error('Bracket no longer exists.');
+      }
+      const current = snap.data() as Bracket;
+      const next = applyMatchDraw(current, matchId, decidedBy, Date.now());
+      tx.update(ref, {
+        status: next.status,
+        matches: next.matches,
+        championName: next.championName,
+        championTeam: next.championTeam,
+        updatedAt: next.updatedAt,
+      });
+      return next;
+    });
+  } catch (error) {
+    if (error instanceof AlreadyDecidedError) {
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.UPDATE, `brackets/${bracketDocId}`);
+  }
+}
+
+export async function undoEliminationDraw(
+  bracketDocId: string,
+  matchId: string
+): Promise<Bracket> {
+  const ref = doc(db, 'brackets', bracketDocId);
+  try {
+    return await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) {
+        throw new Error('Bracket no longer exists.');
+      }
+      const current = snap.data() as Bracket;
+      const next = applyEliminationDrawUndo(current, matchId, Date.now());
+      tx.update(ref, {
+        matches: next.matches,
+        updatedAt: next.updatedAt,
+      });
+      return next;
+    });
+  } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `brackets/${bracketDocId}`);
   }
 }
