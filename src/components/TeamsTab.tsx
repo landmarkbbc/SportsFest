@@ -4,6 +4,7 @@ import {
   ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
+  Shuffle,
   Sparkles,
   Users,
   X,
@@ -14,6 +15,7 @@ import {
   Game,
   Player,
   Role,
+  SportNavigationTarget,
   TeamId,
 } from '../types/models';
 import {
@@ -36,6 +38,8 @@ interface TeamsTabProps {
   onToggleGroupKey: (groupKey: string) => void;
   onSetCollapsedGroupKeys: (nextKeys: Set<string>) => void;
   onOpenBulkAssignPreview: () => void;
+  onOpenRebalancePreview: () => void;
+  onSelectSport: (target: SportNavigationTarget) => void;
   onSelectPlayer: (player: Player) => void;
 }
 
@@ -100,6 +104,8 @@ export function TeamsTab({
   onToggleGroupKey,
   onSetCollapsedGroupKeys,
   onOpenBulkAssignPreview,
+  onOpenRebalancePreview,
+  onSelectSport,
   onSelectPlayer,
 }: TeamsTabProps) {
   const isAdmin = role === 'admin';
@@ -121,12 +127,28 @@ export function TeamsTab({
   );
 
   const blueGroups = useMemo(
-    () => buildTeamDepartmentGroups(bluePlayers),
+    () => buildTeamDepartmentGroups(bluePlayers.filter((p) => p.entries.length > 0)),
     [bluePlayers]
   );
 
   const redGroups = useMemo(
-    () => buildTeamDepartmentGroups(redPlayers),
+    () => buildTeamDepartmentGroups(redPlayers.filter((p) => p.entries.length > 0)),
+    [redPlayers]
+  );
+
+  const blueNoSportsGroups = useMemo(
+    () =>
+      buildTeamDepartmentGroups(bluePlayers.filter((p) => p.entries.length === 0)).filter(
+        (g) => g.members.length > 0
+      ),
+    [bluePlayers]
+  );
+
+  const redNoSportsGroups = useMemo(
+    () =>
+      buildTeamDepartmentGroups(redPlayers.filter((p) => p.entries.length === 0)).filter(
+        (g) => g.members.length > 0
+      ),
     [redPlayers]
   );
 
@@ -156,14 +178,16 @@ export function TeamsTab({
       for (const g of blueGroups) {
         if (g.members.length > 0) keys.push(`blue:${g.groupId}`);
       }
+      if (blueNoSportsGroups.length > 0) keys.push('blue:no-sports');
     }
     if (redPlayers.length > 0) {
       for (const g of redGroups) {
         if (g.members.length > 0) keys.push(`red:${g.groupId}`);
       }
+      if (redNoSportsGroups.length > 0) keys.push('red:no-sports');
     }
     return keys;
-  }, [bluePlayers.length, redPlayers.length, blueGroups, redGroups]);
+  }, [bluePlayers.length, redPlayers.length, blueGroups, redGroups, blueNoSportsGroups.length, redNoSportsGroups.length]);
 
   const allCollapsed =
     allVisibleGroupKeys.length > 0 &&
@@ -182,8 +206,16 @@ export function TeamsTab({
     }
   }
 
-  function renderTeamColumn(team: TeamId, members: Player[], groups: DepartmentOutlineGroup[]) {
+  function renderTeamColumn(
+    team: TeamId,
+    members: Player[],
+    groups: DepartmentOutlineGroup[],
+    noSportsGroups: DepartmentOutlineGroup[]
+  ) {
     const isBlue = team === 'blue';
+    const noSportsCount = noSportsGroups.reduce((sum, g) => sum + g.members.length, 0);
+    const noSportsKey = `${team}:no-sports`;
+    const isNoSportsCollapsed = collapsedGroupKeys.has(noSportsKey);
 
     return (
       <section
@@ -227,67 +259,127 @@ export function TeamsTab({
               </p>
             </div>
           ) : (
-            groups.map((group) => {
-              const key = `${team}:${group.groupId}`;
-              const isEmpty = group.members.length === 0;
-              const isCollapsed = collapsedGroupKeys.has(key);
+            <>
+              {groups.map((group) => {
+                const key = `${team}:${group.groupId}`;
+                const isEmpty = group.members.length === 0;
+                const isCollapsed = collapsedGroupKeys.has(key);
 
-              if (isEmpty) {
+                if (isEmpty) {
+                  return (
+                    <div key={group.groupId} className="px-1.5 py-[6px] flex items-center text-left">
+                      <span className="text-xs font-medium text-fg-muted leading-snug tabular-nums">
+                        {group.label} (0)
+                      </span>
+                    </div>
+                  );
+                }
+
                 return (
-                  <div key={group.groupId} className="px-1.5 py-[6px] flex items-center text-left">
-                    <span className="text-xs font-medium text-fg-muted leading-snug tabular-nums">
-                      {group.label} (0)
-                    </span>
+                  <div key={group.groupId}>
+                    <button
+                      type="button"
+                      aria-expanded={!isCollapsed}
+                      onClick={() => onToggleGroupKey(key)}
+                      className="w-full px-1.5 py-[6px] rounded-lg hover:bg-nested transition-colors duration-150 flex items-start gap-1.5 text-left"
+                    >
+                      <ChevronRight
+                        size={16}
+                        className={`text-fg-muted shrink-0 mt-0.5 transition-transform duration-150 ${
+                          isCollapsed ? '' : 'rotate-90'
+                        }`}
+                      />
+                      <span className="text-xs font-semibold text-fg leading-snug break-words flex-1">
+                        {group.label}{' '}
+                        <span className="font-medium text-fg-muted tabular-nums">
+                          ({group.members.length})
+                        </span>
+                      </span>
+                    </button>
+
+                    {!isCollapsed && (
+                      <ul className="pl-6 pr-1 pt-0.5">
+                        {group.members.map((player) => (
+                          <li key={player.id} className="flex items-start gap-1.5">
+                            <span
+                              className="text-fg-muted text-sm leading-[1.3] py-[2px] select-none shrink-0"
+                              aria-hidden="true"
+                            >
+                              •
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => onSelectPlayer(player)}
+                              className="text-left text-sm leading-[1.3] text-fg hover:underline break-words py-[2px] flex-1"
+                            >
+                              {player.name}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
                 );
-              }
+              })}
 
-              return (
-                <div key={group.groupId}>
+              {noSportsCount > 0 && (
+                <div className="pt-2 mt-2 border-t-2 border-edge-hover">
                   <button
                     type="button"
-                    aria-expanded={!isCollapsed}
-                    onClick={() => onToggleGroupKey(key)}
+                    aria-expanded={!isNoSportsCollapsed}
+                    onClick={() => onToggleGroupKey(noSportsKey)}
                     className="w-full px-1.5 py-[6px] rounded-lg hover:bg-nested transition-colors duration-150 flex items-start gap-1.5 text-left"
                   >
                     <ChevronRight
                       size={16}
                       className={`text-fg-muted shrink-0 mt-0.5 transition-transform duration-150 ${
-                        isCollapsed ? '' : 'rotate-90'
+                        isNoSportsCollapsed ? '' : 'rotate-90'
                       }`}
                     />
                     <span className="text-xs font-semibold text-fg leading-snug break-words flex-1">
-                      {group.label}{' '}
+                      No sports selected{' '}
                       <span className="font-medium text-fg-muted tabular-nums">
-                        ({group.members.length})
+                        ({noSportsCount})
                       </span>
                     </span>
                   </button>
 
-                  {!isCollapsed && (
-                    <ul className="pl-6 pr-1 pt-0.5">
-                      {group.members.map((player) => (
-                        <li key={player.id} className="flex items-start gap-1.5">
-                          <span
-                            className="text-fg-muted text-sm leading-[1.3] py-[2px] select-none shrink-0"
-                            aria-hidden="true"
-                          >
-                            •
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => onSelectPlayer(player)}
-                            className="text-left text-sm leading-[1.3] text-fg hover:underline break-words py-[2px] flex-1"
-                          >
-                            {player.name}
-                          </button>
-                        </li>
+                  {!isNoSportsCollapsed && (
+                    <div className="pl-4 pt-0.5 space-y-1.5">
+                      {noSportsGroups.map((sub) => (
+                        <div key={sub.groupId}>
+                          <div className="px-1.5 py-0.5 text-xs font-semibold text-fg leading-snug break-words">
+                            {sub.label}{' '}
+                            <span className="font-medium text-fg-muted tabular-nums">
+                              ({sub.members.length})
+                            </span>
+                          </div>
+                          <ul className="pl-4 pr-1">
+                            {sub.members.map((player) => (
+                              <li key={player.id} className="flex items-start gap-1.5">
+                                <span
+                                  className="text-fg-muted text-sm leading-[1.3] py-[2px] select-none shrink-0"
+                                  aria-hidden="true"
+                                >
+                                  •
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => onSelectPlayer(player)}
+                                  className="text-left text-sm leading-[1.3] text-fg hover:underline break-words py-[2px] flex-1"
+                                >
+                                  {player.name}
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
                       ))}
-                    </ul>
+                    </div>
                   )}
                 </div>
-              );
-            })
+              )}
+            </>
           )}
         </div>
       </section>
@@ -319,7 +411,17 @@ export function TeamsTab({
           </span>
         )}
 
-        <div className="flex items-center gap-2 ml-auto">
+        <div className="flex items-center gap-2 ml-auto flex-wrap">
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={onOpenRebalancePreview}
+              className="min-h-[44px] px-3 py-2 rounded-xl border border-edge bg-transparent text-xs font-medium text-fg hover:bg-nested inline-flex items-center gap-1.5 transition-colors duration-150"
+            >
+              <Shuffle size={16} />
+              <span>Re-balance</span>
+            </button>
+          )}
           {allVisibleGroupKeys.length > 0 && (
             <button
               type="button"
@@ -349,8 +451,8 @@ export function TeamsTab({
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-3 lg:gap-4 flex-1 min-h-0">
-          {renderTeamColumn('blue', bluePlayers, blueGroups)}
-          {renderTeamColumn('red', redPlayers, redGroups)}
+          {renderTeamColumn('blue', bluePlayers, blueGroups, blueNoSportsGroups)}
+          {renderTeamColumn('red', redPlayers, redGroups, redNoSportsGroups)}
         </div>
       )}
 
@@ -441,9 +543,14 @@ export function TeamsTab({
                     const displayStatus = getDisplayGameBalanceStatus(stats);
 
                     return (
-                      <div
+                      <button
                         key={game.id}
-                        className="bg-nested border border-edge rounded-xl p-4 space-y-3"
+                        type="button"
+                        onClick={() => {
+                          setCompareOpen(false);
+                          onSelectSport({ gameId: game.id });
+                        }}
+                        className="w-full text-left bg-nested border border-edge hover:border-edge-hover rounded-xl p-4 space-y-3 transition-colors duration-150"
                       >
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex items-center gap-2 min-w-0">
@@ -458,7 +565,14 @@ export function TeamsTab({
                               {game.name}
                             </h3>
                           </div>
-                          <BalanceBadge status={displayStatus} />
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <BalanceBadge status={displayStatus} />
+                            <ChevronRight
+                              size={16}
+                              className="text-fg-muted shrink-0"
+                              aria-hidden="true"
+                            />
+                          </div>
                         </div>
 
                         <div className="grid grid-cols-2 gap-3 text-xs">
@@ -509,7 +623,7 @@ export function TeamsTab({
                             </div>
                           ))}
                         </div>
-                      </div>
+                      </button>
                     );
                   })}
                 </div>

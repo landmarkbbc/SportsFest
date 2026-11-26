@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Bracket, Game, TeamId } from '../types/models';
+import { Bracket, Game, SkillLevel, TeamId } from '../types/models';
 import { subscribeBrackets } from '../services/db';
 import { DIVISION_LEVELS, getBracketDocId } from '../utils/bracket';
 
 export interface ScoreboardChampionRow {
   id: string;
+  gameId: string;
+  division: SkillLevel | null;
   title: string;
   iconKey: Game['iconKey'];
   championName: string;
@@ -15,6 +17,7 @@ export interface ScoreboardChampionRow {
 export interface ScoreboardSportRow {
   id: string;
   game: Game;
+  division: SkillLevel | null;
   title: string;
   bluePoints: number;
   redPoints: number;
@@ -118,6 +121,7 @@ export function computeScoreboard(
         sportRows.push({
           id: docId,
           game,
+          division: div.level,
           title,
           bluePoints: result.bluePoints,
           redPoints: result.redPoints,
@@ -126,6 +130,8 @@ export function computeScoreboard(
         if (result.championName && result.championTeam) {
           champions.push({
             id: docId,
+            gameId: game.id,
+            division: div.level,
             title,
             iconKey: game.iconKey,
             championName: result.championName,
@@ -142,6 +148,7 @@ export function computeScoreboard(
       sportRows.push({
         id: docId,
         game,
+        division: null,
         title: game.name,
         bluePoints: result.bluePoints,
         redPoints: result.redPoints,
@@ -150,6 +157,8 @@ export function computeScoreboard(
       if (result.championName && result.championTeam) {
         champions.push({
           id: docId,
+          gameId: game.id,
+          division: null,
           title: game.name,
           iconKey: game.iconKey,
           championName: result.championName,

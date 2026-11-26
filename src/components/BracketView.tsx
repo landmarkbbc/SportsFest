@@ -61,6 +61,8 @@ interface BracketViewProps {
   gamePairs?: GamePairs | null;
   division?: SkillLevel | null;
   role: Role;
+  focusTarget?: 'ongoing';
+  navKey?: number;
   onShowToast: (type: 'success' | 'error', text: string) => void;
 }
 
@@ -228,6 +230,8 @@ function MatchCard({
   canScore,
   canUndo,
   undoing,
+  isPulsing = false,
+  cardRef,
   leadPlayerId,
   onPickWinner,
   onPickDraw,
@@ -241,6 +245,8 @@ function MatchCard({
   canScore: boolean;
   canUndo: boolean;
   undoing: boolean;
+  isPulsing?: boolean;
+  cardRef?: (el: HTMLDivElement | null) => void;
   leadPlayerId?: string;
   onPickWinner: (matchId: string, side: 'a' | 'b', slot: BracketSlotSnapshot, drawCount: number) => void;
   onPickDraw: (match: BracketMatch) => void;
@@ -257,7 +263,12 @@ function MatchCard({
   const secondSlot = secondSide === 'a' ? match.a : match.b;
 
   return (
-    <div className="rounded-xl border border-edge bg-nested p-3 space-y-2">
+    <div
+      ref={cardRef}
+      className={`rounded-xl border bg-nested p-3 space-y-2 transition-shadow ${
+        isPulsing ? 'border-fg animate-match-pulse' : 'border-edge'
+      }`}
+    >
       <div className="flex items-center justify-between gap-2 min-h-[20px]">
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-xs font-medium text-fg-muted tabular-nums">
@@ -396,6 +407,8 @@ export function BracketView({
   gamePairs = null,
   division = null,
   role,
+  focusTarget,
+  navKey,
   onShowToast,
 }: BracketViewProps) {
   const [createOpen, setCreateOpen] = useState(false);
@@ -457,6 +470,10 @@ export function BracketView({
   const suppressNextConfettiRef = useRef(false);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const columnRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const matchRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const championBannerRef = useRef<HTMLDivElement | null>(null);
+  const appliedFocusKeyRef = useRef<string | null>(null);
+  const [pulsingMatchId, setPulsingMatchId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!resetScoresConfirm || resetScoresCountdown <= 0) return;
@@ -606,7 +623,13 @@ export function BracketView({
       const activeRound =
         rounds.find((r) => !r.isComplete)?.round ?? highestRound ?? 1;
       setSummaryCollapsed(false);
-      setRrTab('standings');
+      setRrTab(
+        focusTarget === 'ongoing' &&
+          bracket?.format === 'roundrobin' &&
+          bracket.status !== 'complete'
+          ? 'matchdays'
+          : 'standings'
+      );
       setSelectedPlayerId(null);
       setViewedElimRound(activeRound);
       setAnimatedNewRound(null);
@@ -615,13 +638,76 @@ export function BracketView({
       setResetConfirmOpen(false);
       setResetScoresConfirm(null);
       setRestoreBackupConfirm(null);
-      if (bracket?.format === 'elimination' && activeRound > 1) {
+      if (bracket?.format === 'elimination' && activeRound > 1 && focusTarget !== 'ongoing') {
         window.requestAnimationFrame(() => {
           scrollToEliminationRound(activeRound, true);
         });
       }
     }
-  }, [bracketSessionKey, bracket?.format, highestRound, rounds, scrollToEliminationRound]);
+  }, [bracketSessionKey, bracket?.format, bracket?.status, focusTarget, highestRound, rounds, scrollToEliminationRound]);
+
+  // Focus ongoing match (or Champion banner if complete) when navigated with focus="ongoing"
+  useEffect(() => {
+    if (focusTarget !== 'ongoing' || !bracket) return;
+    const focusKey = `${bracketSessionKey}:${navKey ?? 0}`;
+    if (appliedFocusKeyRef.current === focusKey) return;
+    appliedFocusKeyRef.current = focusKey;
+
+    const prefersReduced =
+      typeof window !== 'undefined' &&
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    const behavior: ScrollBehavior = prefersReduced ? 'auto' : 'smooth';
+
+    let pulseTimer: number | undefined;
+    let rafId: number | undefined;
+
+    if (bracket.status === 'complete') {
+      const scrollTimer = window.setTimeout(() => {
+        championBannerRef.current?.scrollIntoView({ behavior, block: 'center' });
+      }, 60);
+      return () => {
+        window.clearTimeout(scrollTimer);
+      };
+    }
+
+    let ongoingMatch: BracketMatch | null = null;
+    for (const r of rounds) {
+      const found = r.matches.find((m) => m.winner === null && !m.bye);
+      if (found) {
+        ongoingMatch = found;
+        break;
+      }
+    }
+
+    if (!ongoingMatch) return;
+
+    if (bracket.format === 'roundrobin') {
+      setRrTab('matchdays');
+      setSelectedPlayerId(null);
+    }
+
+    const scrollTimer = window.setTimeout(() => {
+      if (bracket.format === 'elimination' && ongoingMatch) {
+        scrollToEliminationRound(ongoingMatch.round, true);
+      }
+      rafId = window.requestAnimationFrame(() => {
+        if (!ongoingMatch) return;
+        const el = matchRefs.current[ongoingMatch.id];
+        if (!el) return;
+        el.scrollIntoView({ behavior, block: 'center', inline: 'nearest' });
+        setPulsingMatchId(ongoingMatch.id);
+        pulseTimer = window.setTimeout(() => {
+          setPulsingMatchId((cur) => (cur === ongoingMatch?.id ? null : cur));
+        }, 2000);
+      });
+    }, 80);
+
+    return () => {
+      window.clearTimeout(scrollTimer);
+      if (rafId !== undefined) window.cancelAnimationFrame(rafId);
+      if (pulseTimer !== undefined) window.clearTimeout(pulseTimer);
+    };
+  }, [focusTarget, navKey, bracket, bracketSessionKey, rounds, scrollToEliminationRound]);
 
   // Detect newly generated round in single elimination, animate + auto-scroll to it
   useEffect(() => {
@@ -1796,6 +1882,7 @@ export function BracketView({
         bracket.championName &&
         bracket.championTeam && (
           <div
+            ref={championBannerRef}
             className={`rounded-xl border p-4 flex items-center gap-3 ${
               bracket.championTeam === 'blue'
                 ? 'bg-blue-tint border-blue-edge'
@@ -2046,6 +2133,10 @@ export function BracketView({
                           canScore={canScore}
                           canUndo={canUndoMatch(bracket, match)}
                           undoing={undoingMatchId === match.id}
+                          isPulsing={pulsingMatchId === match.id}
+                          cardRef={(el) => {
+                            matchRefs.current[match.id] = el;
+                          }}
                           onPickWinner={(matchId, side, slot, drawCount) =>
                             setPendingDecision({ kind: 'winner', matchId, side, slot, drawCount })
                           }
@@ -2243,6 +2334,10 @@ export function BracketView({
                         canScore={canScore}
                         canUndo={canUndoMatch(bracket, match)}
                         undoing={undoingMatchId === match.id}
+                        isPulsing={pulsingMatchId === match.id}
+                        cardRef={(el) => {
+                          matchRefs.current[match.id] = el;
+                        }}
                         onPickWinner={(matchId, side, slot, drawCount) =>
                           setPendingDecision({ kind: 'winner', matchId, side, slot, drawCount })
                         }
@@ -2281,6 +2376,10 @@ export function BracketView({
                   canScore={canScore}
                   canUndo={canUndoMatch(bracket, match)}
                   undoing={undoingMatchId === match.id}
+                  isPulsing={pulsingMatchId === match.id}
+                  cardRef={(el) => {
+                    matchRefs.current[match.id] = el;
+                  }}
                   onPickWinner={(matchId, side, slot, drawCount) =>
                     setPendingDecision({ kind: 'winner', matchId, side, slot, drawCount })
                   }

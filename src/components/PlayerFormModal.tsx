@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowRight, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Trash2, X } from 'lucide-react';
 import {
   DEPARTMENTS,
   Department,
@@ -41,6 +41,7 @@ interface PlayerFormModalProps {
   allPlayers: Player[];
   role: Role;
   games: Game[];
+  lockedGameIds: Set<string>;
   onClose: () => void;
   onSavePlayer: (payload: {
     name: string;
@@ -86,6 +87,7 @@ export function PlayerFormModal({
   allPlayers,
   role,
   games,
+  lockedGameIds,
   onClose,
   onSavePlayer,
   onDeletePlayer,
@@ -109,6 +111,7 @@ export function PlayerFormModal({
     toTeam: TeamId;
     entries: PlayerEntry[];
     diffs: MoveGameBalanceDiff[];
+    lockedGameNames: string[];
   } | null>(null);
 
   // Validation errors
@@ -231,11 +234,20 @@ export function PlayerFormModal({
       player.team !== editTeam
     ) {
       const diffs = previewMovePlayerGameBalances(player, entries, editTeam, allPlayers, games);
+      const seenLocked = new Set<string>();
+      const lockedGameNames: string[] = [];
+      for (const entry of player.entries) {
+        if (lockedGameIds.has(entry.gameId) && !seenLocked.has(entry.gameId)) {
+          seenLocked.add(entry.gameId);
+          lockedGameNames.push(gameById.get(entry.gameId)?.name ?? entry.gameId);
+        }
+      }
       setMoveConfirmData({
         fromTeam: player.team,
         toTeam: editTeam,
         entries,
         diffs,
+        lockedGameNames,
       });
       return;
     }
@@ -753,6 +765,22 @@ export function PlayerFormModal({
               Move {player.name} from {moveConfirmData.fromTeam === 'blue' ? 'Blue' : 'Red'} to{' '}
               {moveConfirmData.toTeam === 'blue' ? 'Blue' : 'Red'}?
             </h2>
+
+            {moveConfirmData.lockedGameNames.length > 0 && (
+              <div className="space-y-1.5">
+                {moveConfirmData.lockedGameNames.map((gName) => (
+                  <div
+                    key={gName}
+                    className="flex items-start gap-2 p-2.5 rounded-xl border border-status-amber-edge bg-status-amber-bg text-status-amber-fg text-xs font-medium leading-snug"
+                  >
+                    <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+                    <span>
+                      A bracket for {gName} already includes this player on the old team. Reset that bracket first to avoid a mismatch.
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {moveConfirmData.diffs.length === 0 ? (
               <p className="text-sm text-fg-muted">

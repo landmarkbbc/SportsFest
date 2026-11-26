@@ -1,9 +1,11 @@
 import {
   BalanceStatus,
+  Bracket,
   DEPARTMENTS,
   Department,
   DisplayBalanceStatus,
   Game,
+  GamePairs,
   Gender,
   Player,
   PlayerEntry,
@@ -612,11 +614,41 @@ export interface BulkAssignmentPlan {
   };
 }
 
+function currentRosterCost(state: MutableRosterState): number {
+  return computeRosterCost(
+    state.blueTotalPlayers,
+    state.redTotalPlayers,
+    state.blueDeptCounts,
+    state.redDeptCounts,
+    state.blueDeptGenderCounts,
+    state.redDeptGenderCounts
+  );
+}
+
+function deltaRosterCostForSwap(
+  state: MutableRosterState,
+  pBlue: Player,
+  pRed: Player
+): number {
+  const before = currentRosterCost(state);
+  applyPlayerToState(state, pBlue, 'blue', -1);
+  applyPlayerToState(state, pRed, 'red', -1);
+  applyPlayerToState(state, pBlue, 'red', 1);
+  applyPlayerToState(state, pRed, 'blue', 1);
+  const after = currentRosterCost(state);
+  applyPlayerToState(state, pBlue, 'red', -1);
+  applyPlayerToState(state, pRed, 'blue', -1);
+  applyPlayerToState(state, pBlue, 'blue', 1);
+  applyPlayerToState(state, pRed, 'red', 1);
+  return after - before;
+}
+
 export function planBulkAssignment(allPlayers: Player[], games: Game[]): BulkAssignmentPlan {
   const gameById = new Map(games.map((g) => [g.id, g]));
-  const unassigned = allPlayers
-    .filter((p) => p.team === null)
-    .slice()
+  const unassigned = allPlayers.filter((p) => p.team === null);
+
+  const withGames = unassigned
+    .filter((p) => p.entries.length > 0)
     .sort((a, b) => {
       const levelDiff =
         getPlayerTotalEffectiveLevel(b, gameById) -
@@ -628,14 +660,21 @@ export function planBulkAssignment(allPlayers: Player[], games: Game[]): BulkAss
       return a.id.localeCompare(b.id);
     });
 
+  const noGames = unassigned
+    .filter((p) => p.entries.length === 0)
+    .sort((a, b) => {
+      if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+      return a.id.localeCompare(b.id);
+    });
+
   const beforeCost = computeTotalCost(allPlayers, games);
   const state = buildMutableState(allPlayers, games);
 
-  const proposedBlue: Player[] = [];
-  const proposedRed: Player[] = [];
+  // Phase 1: Players with at least one game (full cost + local swaps)
+  const withGamesBlue: Player[] = [];
+  const withGamesRed: Player[] = [];
 
-  // Step 2: Greedy placement
-  for (const player of unassigned) {
+  for (const player of withGames) {
     applyPlayerToState(state, player, 'blue', 1);
     const blueCost = sumAllStateCost(state);
     applyPlayerToState(state, player, 'blue', -1);
@@ -657,22 +696,21 @@ export function planBulkAssignment(allPlayers: Player[], games: Game[]): BulkAss
 
     applyPlayerToState(state, player, chosen, 1);
     if (chosen === 'blue') {
-      proposedBlue.push(player);
+      withGamesBlue.push(player);
     } else {
-      proposedRed.push(player);
+      withGamesRed.push(player);
     }
   }
 
-  // Step 3: Local swap improvement (up to MAX_SWAP_ITERATIONS)
   let iterationsUsed = 0;
-  while (iterationsUsed < MAX_SWAP_ITERATIONS && proposedBlue.length > 0 && proposedRed.length > 0) {
+  while (iterationsUsed < MAX_SWAP_ITERATIONS && withGamesBlue.length > 0 && withGamesRed.length > 0) {
     let bestDelta = 0;
     let bestBlueIdx = -1;
     let bestRedIdx = -1;
 
-    for (let bi = 0; bi < proposedBlue.length; bi++) {
-      for (let ri = 0; ri < proposedRed.length; ri++) {
-        const delta = deltaCostForSwap(state, proposedBlue[bi], proposedRed[ri]);
+    for (let bi = 0; bi < withGamesBlue.length; bi++) {
+      for (let ri = 0; ri < withGamesRed.length; ri++) {
+        const delta = deltaCostForSwap(state, withGamesBlue[bi], withGamesRed[ri]);
         if (delta < bestDelta) {
           bestDelta = delta;
           bestBlueIdx = bi;
@@ -685,18 +723,86 @@ export function planBulkAssignment(allPlayers: Player[], games: Game[]): BulkAss
       break;
     }
 
-    const pBlue = proposedBlue[bestBlueIdx];
-    const pRed = proposedRed[bestRedIdx];
+    const pBlue = withGamesBlue[bestBlueIdx];
+    const pRed = withGamesRed[bestRedIdx];
 
     applyPlayerToState(state, pBlue, 'blue', -1);
     applyPlayerToState(state, pRed, 'red', -1);
     applyPlayerToState(state, pBlue, 'red', 1);
     applyPlayerToState(state, pRed, 'blue', 1);
 
-    proposedBlue[bestBlueIdx] = pRed;
-    proposedRed[bestRedIdx] = pBlue;
+    withGamesBlue[bestBlueIdx] = pRed;
+    withGamesRed[bestRedIdx] = pBlue;
     iterationsUsed += 1;
   }
+
+  // Phase 2: Players with no games, placed last using only roster-level terms
+  const noGamesBlue: Player[] = [];
+  const noGamesRed: Player[] = [];
+
+  for (const player of noGames) {
+    applyPlayerToState(state, player, 'blue', 1);
+    const blueCost = currentRosterCost(state);
+    applyPlayerToState(state, player, 'blue', -1);
+
+    applyPlayerToState(state, player, 'red', 1);
+    const redCost = currentRosterCost(state);
+    applyPlayerToState(state, player, 'red', -1);
+
+    let chosen: TeamId;
+    if (blueCost < redCost) {
+      chosen = 'blue';
+    } else if (redCost < blueCost) {
+      chosen = 'red';
+    } else if (state.blueTotalPlayers !== state.redTotalPlayers) {
+      chosen = state.blueTotalPlayers < state.redTotalPlayers ? 'blue' : 'red';
+    } else {
+      chosen = 'blue';
+    }
+
+    applyPlayerToState(state, player, chosen, 1);
+    if (chosen === 'blue') {
+      noGamesBlue.push(player);
+    } else {
+      noGamesRed.push(player);
+    }
+  }
+
+  while (iterationsUsed < MAX_SWAP_ITERATIONS && noGamesBlue.length > 0 && noGamesRed.length > 0) {
+    let bestDelta = 0;
+    let bestBlueIdx = -1;
+    let bestRedIdx = -1;
+
+    for (let bi = 0; bi < noGamesBlue.length; bi++) {
+      for (let ri = 0; ri < noGamesRed.length; ri++) {
+        const delta = deltaRosterCostForSwap(state, noGamesBlue[bi], noGamesRed[ri]);
+        if (delta < bestDelta) {
+          bestDelta = delta;
+          bestBlueIdx = bi;
+          bestRedIdx = ri;
+        }
+      }
+    }
+
+    if (bestBlueIdx === -1 || bestRedIdx === -1) {
+      break;
+    }
+
+    const pBlue = noGamesBlue[bestBlueIdx];
+    const pRed = noGamesRed[bestRedIdx];
+
+    applyPlayerToState(state, pBlue, 'blue', -1);
+    applyPlayerToState(state, pRed, 'red', -1);
+    applyPlayerToState(state, pBlue, 'red', 1);
+    applyPlayerToState(state, pRed, 'blue', 1);
+
+    noGamesBlue[bestBlueIdx] = pRed;
+    noGamesRed[bestRedIdx] = pBlue;
+    iterationsUsed += 1;
+  }
+
+  const proposedBlue = [...withGamesBlue, ...noGamesBlue];
+  const proposedRed = [...withGamesRed, ...noGamesRed];
 
   const proposedMap = new Map<string, TeamId>();
   const proposedTeamByPlayerId: Record<string, TeamId> = {};
@@ -975,5 +1081,355 @@ export function planSingleAssignment(
     team: chosen,
     reason,
     joinedGames: buildJoinedGameBalances(targetPlayer, chosen, existingPlayers, games),
+  };
+}
+
+export function getLockedGameIds(
+  bracketsByGameId: ReadonlyMap<string, Bracket>,
+  pairsByGameId: ReadonlyMap<string, GamePairs>
+): Set<string> {
+  const locked = new Set<string>();
+  for (const gameId of pairsByGameId.keys()) {
+    locked.add(gameId);
+  }
+  for (const docId of bracketsByGameId.keys()) {
+    const divIdx = docId.lastIndexOf('__L');
+    const gameId = divIdx > 0 ? docId.slice(0, divIdx) : docId;
+    locked.add(gameId);
+  }
+  return locked;
+}
+
+export interface RebalanceMove {
+  player: Player;
+  fromTeam: TeamId;
+  toTeam: TeamId;
+  reason: string;
+}
+
+export interface RebalanceGameBadgeChange {
+  game: Game;
+  before: GameStats;
+  after: GameStats;
+  beforeBadge: DisplayBalanceStatus;
+  afterBadge: DisplayBalanceStatus;
+}
+
+export interface RebalancePlan {
+  lockedCount: number;
+  beforeCost: number;
+  afterCost: number;
+  moves: RebalanceMove[];
+  changesByPlayerId: Record<string, TeamId>;
+  totalsBefore: { blue: number; red: number };
+  totalsAfter: { blue: number; red: number };
+  deptGenderBefore: {
+    blue: Record<DeptGenderKey, number>;
+    red: Record<DeptGenderKey, number>;
+  };
+  deptGenderAfter: {
+    blue: Record<DeptGenderKey, number>;
+    red: Record<DeptGenderKey, number>;
+  };
+  changedGames: RebalanceGameBadgeChange[];
+}
+
+const DEPT_GENDER_REASON_LABELS: Record<DeptGenderKey, string> = {
+  Kids: 'Kids',
+  'YP:M': 'YP Males',
+  'YP:F': 'YP Females',
+  'SP:M': 'SP Males',
+  'SP:F': 'SP Females',
+  'Adults:M': 'Adults Males',
+  'Adults:F': 'Adults Females',
+};
+
+function hasAnyUnbalancedGame(state: MutableRosterState, games: Game[]): boolean {
+  for (const game of games) {
+    const bucket = state.buckets.get(game.id);
+    if (!bucket) continue;
+    if (bucket.blue.headcount === 0 && bucket.red.headcount === 0) continue;
+    const badge = getGameBalanceBadge(
+      bucket.blue.headcount - bucket.red.headcount,
+      bucket.blue.totalLevel - bucket.red.totalLevel,
+      game
+    );
+    if (badge === 'Unbalanced') return true;
+  }
+  return false;
+}
+
+function buildRebalanceMoveReason(
+  player: Player,
+  fromTeam: TeamId,
+  toTeam: TeamId,
+  totalsBefore: { blue: number; red: number },
+  deptGenderBefore: { blue: Record<DeptGenderKey, number>; red: Record<DeptGenderKey, number> },
+  gameBeforeStats: ReadonlyMap<string, GameStats>,
+  gameById: ReadonlyMap<string, Game>
+): string {
+  for (const entry of player.entries) {
+    const g = gameById.get(entry.gameId);
+    const st = gameBeforeStats.get(entry.gameId);
+    if (!g || !st) continue;
+    const fromCount = st[fromTeam].headcount;
+    const toCount = st[toTeam].headcount;
+    const fromLvl = st[fromTeam].totalLevel;
+    const toLvl = st[toTeam].totalLevel;
+    if (st.badge === 'Unbalanced' || fromCount > toCount || (g.usesSkillLevel && fromLvl > toLvl)) {
+      return g.usesSkillLevel && fromLvl > toLvl && fromCount <= toCount
+        ? `balances ${g.name} skill`
+        : `balances ${g.name}`;
+    }
+  }
+
+  const dgKey = getDeptGenderKey(player);
+  if (deptGenderBefore[fromTeam][dgKey] > deptGenderBefore[toTeam][dgKey]) {
+    return `evens ${DEPT_GENDER_REASON_LABELS[dgKey]}`;
+  }
+
+  if (totalsBefore[fromTeam] > totalsBefore[toTeam]) {
+    return 'evens team headcount';
+  }
+
+  return `balances ${DEPT_GENDER_REASON_LABELS[dgKey]}`;
+}
+
+export function planRebalance(
+  allPlayers: Player[],
+  games: Game[],
+  bracketsByGameId: ReadonlyMap<string, Bracket>,
+  pairsByGameId: ReadonlyMap<string, GamePairs>
+): RebalancePlan {
+  const MAX_REBALANCE_MOVES = 8;
+  const MIN_COST_DROP = 0.5;
+
+  const gameById = new Map(games.map((g) => [g.id, g]));
+  const lockedGameIds = getLockedGameIds(bracketsByGameId, pairsByGameId);
+
+  const assignedPlayers = allPlayers.filter(
+    (p): p is Player & { team: TeamId } => p.team === 'blue' || p.team === 'red'
+  );
+
+  let lockedCount = 0;
+  const noGameUnlocked: (Player & { team: TeamId })[] = [];
+  const withGameUnlocked: (Player & { team: TeamId })[] = [];
+
+  for (const p of assignedPlayers) {
+    const isLocked = p.entries.some((e) => lockedGameIds.has(e.gameId));
+    if (isLocked) {
+      lockedCount += 1;
+    } else if (p.entries.length === 0) {
+      noGameUnlocked.push(p);
+    } else {
+      withGameUnlocked.push(p);
+    }
+  }
+
+  const originalTeam = new Map<string, TeamId>(assignedPlayers.map((p) => [p.id, p.team]));
+  const currentTeam = new Map<string, TeamId>(assignedPlayers.map((p) => [p.id, p.team]));
+
+  const state = buildMutableState(allPlayers, games);
+  const beforeCost = sumAllStateCost(state);
+  const totalsBefore = { blue: state.blueTotalPlayers, red: state.redTotalPlayers };
+  const deptGenderBefore = {
+    blue: { ...state.blueDeptGenderCounts },
+    red: { ...state.redDeptGenderCounts },
+  };
+
+  function getMovedCountWithPatch(patches: [string, TeamId][]): number {
+    const patchMap = new Map(patches);
+    let count = 0;
+    for (const [id, orig] of originalTeam.entries()) {
+      const next = patchMap.get(id) ?? currentTeam.get(id)!;
+      if (next !== orig) count += 1;
+    }
+    return count;
+  }
+
+  type CandidateStep =
+    | {
+        kind: 'single';
+        player: Player;
+        fromTeam: TeamId;
+        toTeam: TeamId;
+        improvement: number;
+        noGameScore: number;
+        movedAfter: number;
+      }
+    | {
+        kind: 'swap';
+        pBlue: Player;
+        pRed: Player;
+        improvement: number;
+        noGameScore: number;
+        movedAfter: number;
+      };
+
+  function runPhase(candidates: (Player & { team: TeamId })[], prioritizeNoGames: boolean) {
+    while (true) {
+      const baseCost = sumAllStateCost(state);
+      let best: CandidateStep | null = null;
+
+      const isBetter = (next: CandidateStep): boolean => {
+        if (next.improvement < MIN_COST_DROP) return false;
+        if (!best) return true;
+        if (next.improvement > best.improvement + 1e-9) return true;
+        if (Math.abs(next.improvement - best.improvement) <= 1e-9) {
+          if (prioritizeNoGames && next.noGameScore !== best.noGameScore) {
+            return next.noGameScore > best.noGameScore;
+          }
+          if (next.movedAfter !== best.movedAfter) {
+            return next.movedAfter < best.movedAfter;
+          }
+        }
+        return false;
+      };
+
+      // Single moves
+      for (const p of candidates) {
+        const cur = currentTeam.get(p.id)!;
+        const next: TeamId = cur === 'blue' ? 'red' : 'blue';
+        const movedAfter = getMovedCountWithPatch([[p.id, next]]);
+        if (movedAfter > MAX_REBALANCE_MOVES) continue;
+
+        applyPlayerToState(state, p, cur, -1);
+        applyPlayerToState(state, p, next, 1);
+        const newCost = sumAllStateCost(state);
+        applyPlayerToState(state, p, next, -1);
+        applyPlayerToState(state, p, cur, 1);
+
+        const step: CandidateStep = {
+          kind: 'single',
+          player: p,
+          fromTeam: cur,
+          toTeam: next,
+          improvement: baseCost - newCost,
+          noGameScore: p.entries.length === 0 ? 2 : 0,
+          movedAfter,
+        };
+        if (isBetter(step)) best = step;
+      }
+
+      // Cross-team swaps
+      const blues = candidates.filter((p) => currentTeam.get(p.id) === 'blue');
+      const reds = candidates.filter((p) => currentTeam.get(p.id) === 'red');
+      for (const pBlue of blues) {
+        for (const pRed of reds) {
+          const movedAfter = getMovedCountWithPatch([
+            [pBlue.id, 'red'],
+            [pRed.id, 'blue'],
+          ]);
+          if (movedAfter > MAX_REBALANCE_MOVES) continue;
+
+          const delta = deltaCostForSwap(state, pBlue, pRed);
+          const step: CandidateStep = {
+            kind: 'swap',
+            pBlue,
+            pRed,
+            improvement: -delta,
+            noGameScore:
+              (pBlue.entries.length === 0 ? 1 : 0) + (pRed.entries.length === 0 ? 1 : 0),
+            movedAfter,
+          };
+          if (isBetter(step)) best = step;
+        }
+      }
+
+      if (!best) break;
+
+      if (best.kind === 'single') {
+        applyPlayerToState(state, best.player, best.fromTeam, -1);
+        applyPlayerToState(state, best.player, best.toTeam, 1);
+        currentTeam.set(best.player.id, best.toTeam);
+      } else {
+        applyPlayerToState(state, best.pBlue, 'blue', -1);
+        applyPlayerToState(state, best.pRed, 'red', -1);
+        applyPlayerToState(state, best.pBlue, 'red', 1);
+        applyPlayerToState(state, best.pRed, 'blue', 1);
+        currentTeam.set(best.pBlue.id, 'red');
+        currentTeam.set(best.pRed.id, 'blue');
+      }
+    }
+  }
+
+  // Phase 1: Players with NO game entries
+  runPhase(noGameUnlocked, true);
+
+  // Phase 2: Only if headcount diff > 1 or any game is Unbalanced
+  const headDiffAfterPhase1 = Math.abs(state.blueTotalPlayers - state.redTotalPlayers);
+  if (
+    (headDiffAfterPhase1 > 1 || hasAnyUnbalancedGame(state, games)) &&
+    getMovedCountWithPatch([]) < MAX_REBALANCE_MOVES
+  ) {
+    runPhase([...noGameUnlocked, ...withGameUnlocked], true);
+  }
+
+  const afterCost = sumAllStateCost(state);
+  const totalsAfter = { blue: state.blueTotalPlayers, red: state.redTotalPlayers };
+  const deptGenderAfter = {
+    blue: { ...state.blueDeptGenderCounts },
+    red: { ...state.redDeptGenderCounts },
+  };
+
+  const beforeGameStatsList = computeAllGameStats(allPlayers, games);
+  const beforeGameStatsMap = new Map(beforeGameStatsList.map((s) => [s.gameId, s]));
+
+  const changesByPlayerId: Record<string, TeamId> = {};
+  const moves: RebalanceMove[] = [];
+
+  for (const p of assignedPlayers) {
+    const nextTeam = currentTeam.get(p.id)!;
+    if (nextTeam !== p.team) {
+      changesByPlayerId[p.id] = nextTeam;
+      moves.push({
+        player: p,
+        fromTeam: p.team,
+        toTeam: nextTeam,
+        reason: buildRebalanceMoveReason(
+          p,
+          p.team,
+          nextTeam,
+          totalsBefore,
+          deptGenderBefore,
+          beforeGameStatsMap,
+          gameById
+        ),
+      });
+    }
+  }
+
+  moves.sort((a, b) => {
+    if (a.fromTeam !== b.fromTeam) return a.fromTeam.localeCompare(b.fromTeam);
+    return a.player.name.localeCompare(b.player.name);
+  });
+
+  const afterPlayers = allPlayers.map((p) => {
+    const next = changesByPlayerId[p.id];
+    return next ? { ...p, team: next } : p;
+  });
+
+  const changedGames: RebalanceGameBadgeChange[] = [];
+  for (const game of games) {
+    const before = beforeGameStatsMap.get(game.id) ?? computeGameStats(allPlayers, game.id, undefined, game);
+    const after = computeGameStats(afterPlayers, game.id, undefined, game);
+    const beforeBadge = getDisplayGameBalanceStatus(before);
+    const afterBadge = getDisplayGameBalanceStatus(after);
+    if (beforeBadge !== afterBadge) {
+      changedGames.push({ game, before, after, beforeBadge, afterBadge });
+    }
+  }
+
+  return {
+    lockedCount,
+    beforeCost,
+    afterCost,
+    moves,
+    changesByPlayerId,
+    totalsBefore,
+    totalsAfter,
+    deptGenderBefore,
+    deptGenderAfter,
+    changedGames,
   };
 }

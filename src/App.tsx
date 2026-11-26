@@ -23,6 +23,7 @@ import {
   Player,
   PlayerEntry,
   Role,
+  SportNavigationTarget,
   TeamId,
 } from './types/models';
 import {
@@ -50,9 +51,12 @@ import {
 } from './services/db';
 import {
   BulkAssignmentPlan,
+  RebalancePlan,
   SingleAssignmentResult,
   buildManualSingleAssignmentResult,
+  getLockedGameIds,
   planBulkAssignment,
+  planRebalance,
   planSingleAssignment,
 } from './utils/balance';
 import { useBracketsAndScoreboard } from './hooks/useScoreboard';
@@ -66,6 +70,7 @@ import { PlayerFormModal, WalkInTeamChoice } from './components/PlayerFormModal'
 import { AssignPlayerModal } from './components/AssignPlayerModal';
 import { AssignmentConfirmationModal } from './components/AssignmentConfirmationModal';
 import { BulkAssignPreviewModal } from './components/BulkAssignPreviewModal';
+import { RebalancePreviewModal } from './components/RebalancePreviewModal';
 import { SportDetailView } from './components/SportDetailModal';
 import { ProgramModal } from './components/ProgramModal';
 import { Toast, ToastMessage } from './components/Toast';
@@ -166,7 +171,14 @@ export default function App() {
   const [bulkPlan, setBulkPlan] = useState<BulkAssignmentPlan | null>(null);
   const [bulkConfirming, setBulkConfirming] = useState(false);
 
-  const [selectedSport, setSelectedSport] = useState<Game | null>(null);
+  const [rebalancePreviewOpen, setRebalancePreviewOpen] = useState(false);
+  const [rebalancePlan, setRebalancePlan] = useState<RebalancePlan | null>(null);
+  const [rebalanceConfirming, setRebalanceConfirming] = useState(false);
+
+  const [sportNav, setSportNav] = useState<(SportNavigationTarget & { key: number }) | null>(
+    null
+  );
+  const sportNavCounterRef = useRef(0);
 
   // Toast state
   const [toast, setToast] = useState<ToastMessage | null>(null);
@@ -187,13 +199,25 @@ export default function App() {
 
   const handleSelectTab = useCallback((nextTab: AppTab) => {
     setActiveTab(nextTab);
-    setSelectedSport(null);
+    setSportNav(null);
     try {
       localStorage.setItem(TAB_STORAGE_KEY, nextTab);
     } catch {
       // Ignore storage errors
     }
   }, []);
+
+  const openSportPage = useCallback(
+    (target: SportNavigationTarget) => {
+      sportNavCounterRef.current += 1;
+      setSportNav({
+        ...target,
+        fromTab: target.fromTab ?? activeTab,
+        key: sportNavCounterRef.current,
+      });
+    },
+    [activeTab]
+  );
 
   const handleSetRole = useCallback((nextRole: Role) => {
     setRole(nextRole);
@@ -321,10 +345,15 @@ export default function App() {
   const isSynced = isOnline && !playersFromCache;
   const showInitialPinSetup = authReady && settingsLoaded && !settingsExists;
 
-  // Keep selectedSport synchronized if games update
+  const lockedGameIds = useMemo(
+    () => getLockedGameIds(bracketsByGameId, pairsByGameId),
+    [bracketsByGameId, pairsByGameId]
+  );
+
+  // Keep activeSport synchronized if games update
   const activeSport = useMemo(
-    () => (selectedSport ? games.find((g) => g.id === selectedSport.id) ?? null : null),
-    [selectedSport, games]
+    () => (sportNav ? games.find((g) => g.id === sportNav.gameId) ?? null : null),
+    [sportNav, games]
   );
 
   // Handlers
@@ -526,6 +555,29 @@ export default function App() {
     }
   }
 
+  function handleOpenRebalancePreview() {
+    if (role !== 'admin') return;
+    const plan = planRebalance(players, games, bracketsByGameId, pairsByGameId);
+    setRebalancePlan(plan);
+    setRebalancePreviewOpen(true);
+  }
+
+  async function handleConfirmRebalance() {
+    if (!rebalancePlan || rebalancePlan.moves.length === 0) return;
+    setRebalanceConfirming(true);
+    try {
+      await assignBulkTeams(rebalancePlan.changesByPlayerId);
+      const count = rebalancePlan.moves.length;
+      setRebalancePreviewOpen(false);
+      setRebalancePlan(null);
+      showToast('success', `${count} ${count === 1 ? 'player' : 'players'} moved`);
+    } catch (err) {
+      showToast('error', err instanceof Error ? err.message : 'Failed to re-balance teams.');
+    } finally {
+      setRebalanceConfirming(false);
+    }
+  }
+
   async function handleResetAllTeams() {
     try {
       await resetAllTeamAssignments(players);
@@ -673,48 +725,67 @@ export default function App() {
             </div>
           )}
 
-          {activeTab === 'sports' && (
-            activeSport ? (
-              <SportDetailView
-                game={activeSport}
-                players={players}
-                bracketsByGameId={bracketsByGameId}
-                pairsByGameId={pairsByGameId}
-                role={role}
-                onBack={() => setSelectedSport(null)}
-                onShowToast={showToast}
-              />
-            ) : (
-              <SportsTab
-                loading={initialLoading}
-                games={games}
-                players={players}
-                onSelectGame={(game) => setSelectedSport(game)}
-              />
-            )
-          )}
-
-          {activeTab === 'scoreboard' && (
-            <ScoreboardTab loading={initialLoading} scoreboard={scoreboard} />
-          )}
-
-          {activeTab === 'teams' && (
-            <TeamsTab
-              loading={initialLoading}
+          {activeSport && sportNav ? (
+            <SportDetailView
+              game={activeSport}
               players={players}
-              games={games}
+              bracketsByGameId={bracketsByGameId}
+              pairsByGameId={pairsByGameId}
               role={role}
-              collapsedGroupKeys={collapsedTeamGroupKeys}
-              onToggleGroupKey={handleToggleTeamGroupKey}
-              onSetCollapsedGroupKeys={setCollapsedTeamGroupKeys}
-              onOpenBulkAssignPreview={handleOpenBulkAssignPreview}
-              onSelectPlayer={(player) => {
-                setSelectedPlayer(player);
-                setPlayerModalMode('edit');
-                setPlayerModalOpen(true);
-              }}
+              initialDivision={sportNav.division ?? null}
+              initialTab={sportNav.tab}
+              focusTarget={sportNav.focus}
+              navKey={sportNav.key}
+              backLabel={
+                sportNav.fromTab === 'scoreboard'
+                  ? 'Back to scoreboard'
+                  : sportNav.fromTab === 'teams'
+                    ? 'Back to teams'
+                    : 'Back to sports'
+              }
+              onBack={() => setSportNav(null)}
+              onShowToast={showToast}
             />
-          )}
+          ) : (
+            <>
+              {activeTab === 'sports' && (
+                <SportsTab
+                  loading={initialLoading}
+                  games={games}
+                  players={players}
+                  onSelectGame={(game) => openSportPage({ gameId: game.id, fromTab: 'sports' })}
+                />
+              )}
+
+              {activeTab === 'scoreboard' && (
+                <ScoreboardTab
+                  loading={initialLoading}
+                  scoreboard={scoreboard}
+                  onSelectSport={(target) =>
+                    openSportPage({ ...target, fromTab: 'scoreboard' })
+                  }
+                />
+              )}
+
+              {activeTab === 'teams' && (
+                <TeamsTab
+                  loading={initialLoading}
+                  players={players}
+                  games={games}
+                  role={role}
+                  collapsedGroupKeys={collapsedTeamGroupKeys}
+                  onToggleGroupKey={handleToggleTeamGroupKey}
+                  onSetCollapsedGroupKeys={setCollapsedTeamGroupKeys}
+                  onOpenBulkAssignPreview={handleOpenBulkAssignPreview}
+                  onOpenRebalancePreview={handleOpenRebalancePreview}
+                  onSelectSport={(target) => openSportPage({ ...target, fromTab: 'teams' })}
+                  onSelectPlayer={(player) => {
+                    setSelectedPlayer(player);
+                    setPlayerModalMode('edit');
+                    setPlayerModalOpen(true);
+                  }}
+                />
+              )}
 
           {activeTab === 'players' && (
             <PlayersTab
@@ -758,6 +829,8 @@ export default function App() {
               onResetAllTeams={handleResetAllTeams}
               onShowToast={showToast}
             />
+          )}
+            </>
           )}
         </main>
       </div>
@@ -811,6 +884,7 @@ export default function App() {
         allPlayers={players}
         role={role}
         games={games}
+        lockedGameIds={lockedGameIds}
         onClose={() => setPlayerModalOpen(false)}
         onSavePlayer={handleSavePlayer}
         onDeletePlayer={handleDeletePlayer}
@@ -840,6 +914,17 @@ export default function App() {
         onCancel={() => {
           setBulkPreviewOpen(false);
           setBulkPlan(null);
+        }}
+      />
+
+      <RebalancePreviewModal
+        open={rebalancePreviewOpen}
+        plan={rebalancePlan}
+        confirming={rebalanceConfirming}
+        onConfirm={handleConfirmRebalance}
+        onCancel={() => {
+          setRebalancePreviewOpen(false);
+          setRebalancePlan(null);
         }}
       />
 

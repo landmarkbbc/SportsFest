@@ -34,6 +34,14 @@ export type DisplayBalanceStatus = BalanceStatus | 'No players' | 'Not assigned 
 
 export type AppTab = 'sports' | 'scoreboard' | 'teams' | 'players' | 'settings';
 
+export interface SportNavigationTarget {
+  gameId: string;
+  division?: SkillLevel | null;
+  tab?: 'matches' | 'players';
+  focus?: 'ongoing';
+  fromTab?: AppTab;
+}
+
 export interface PlayerEntry {
   slot: EntrySlot;
   gameId: string;

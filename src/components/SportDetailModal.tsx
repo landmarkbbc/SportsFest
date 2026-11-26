@@ -35,6 +35,11 @@ interface SportDetailViewProps {
   bracketsByGameId: Map<string, Bracket>;
   pairsByGameId: Map<string, GamePairs>;
   role: Role;
+  initialDivision?: SkillLevel | null;
+  initialTab?: 'matches' | 'players';
+  focusTarget?: 'ongoing';
+  navKey?: number;
+  backLabel?: string;
   onBack: () => void;
   onShowToast: (type: 'success' | 'error', text: string) => void;
 }
@@ -100,6 +105,11 @@ export function SportDetailView({
   bracketsByGameId,
   pairsByGameId,
   role,
+  initialDivision,
+  initialTab,
+  focusTarget,
+  navKey,
+  backLabel,
   onBack,
   onShowToast,
 }: SportDetailViewProps) {
@@ -112,17 +122,19 @@ export function SportDetailView({
     return bracketsByGameId.has(game.id);
   }, [game.id, game.hasDivisions, bracketsByGameId]);
 
-  const [subTab, setSubTab] = useState<'matches' | 'players'>(() =>
-    hasExistingBracket ? 'matches' : 'players'
+  const [subTab, setSubTab] = useState<'matches' | 'players'>(
+    () => initialTab ?? (hasExistingBracket ? 'matches' : 'players')
   );
-  const [activeDivision, setActiveDivision] = useState<SkillLevel>(1);
+  const [activeDivision, setActiveDivision] = useState<SkillLevel>(
+    () => initialDivision ?? 1
+  );
 
   useEffect(() => {
-    setSubTab(hasExistingBracket ? 'matches' : 'players');
-    setActiveDivision(1);
-    // Reset default tab only when switching to a different game
+    setSubTab(initialTab ?? (hasExistingBracket ? 'matches' : 'players'));
+    setActiveDivision(initialDivision ?? 1);
+    // Reset default tab only when switching game or navigating from another screen
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [game.id]);
+  }, [game.id, navKey]);
 
   const stats = computeGameStats(players, game.id, undefined, game);
   const displayStatus = getDisplayGameBalanceStatus(stats);
@@ -211,7 +223,7 @@ export function SportDetailView({
             <button
               type="button"
               onClick={onBack}
-              aria-label="Back to sports"
+              aria-label={backLabel ?? 'Back to sports'}
               className="w-11 h-11 rounded-full border border-edge bg-transparent hover:bg-nested hover:border-edge-hover text-fg inline-flex items-center justify-center shrink-0 transition-colors duration-150"
             >
               <ArrowLeft size={18} />
@@ -368,6 +380,8 @@ export function SportDetailView({
             gamePairs={gamePairs}
             division={game.hasDivisions ? activeDivision : null}
             role={role}
+            focusTarget={focusTarget}
+            navKey={navKey}
             onShowToast={onShowToast}
           />
         </div>

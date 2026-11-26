@@ -1,11 +1,13 @@
-import { Trophy } from 'lucide-react';
+import { ChevronRight, Trophy } from 'lucide-react';
 import { ScoreboardData, ScoreboardSportRow } from '../hooks/useScoreboard';
+import { SportNavigationTarget } from '../types/models';
 import { formatPoints } from '../utils/bracket';
 import { SportIcon } from './SportIcons';
 
 interface ScoreboardTabProps {
   loading: boolean;
   scoreboard: ScoreboardData;
+  onSelectSport: (target: SportNavigationTarget) => void;
 }
 
 function StatusPill({ status }: { status: ScoreboardSportRow['status'] }) {
@@ -30,7 +32,11 @@ function StatusPill({ status }: { status: ScoreboardSportRow['status'] }) {
   );
 }
 
-export function ScoreboardTab({ loading, scoreboard }: ScoreboardTabProps) {
+export function ScoreboardTab({
+  loading,
+  scoreboard,
+  onSelectSport,
+}: ScoreboardTabProps) {
   if (loading) {
     return (
       <div className="space-y-6">
@@ -106,9 +112,18 @@ export function ScoreboardTab({ loading, scoreboard }: ScoreboardTabProps) {
             {scoreboard.champions.map((row) => {
               const isBlue = row.championTeam === 'blue';
               return (
-                <div
+                <button
                   key={row.id}
-                  className="px-4 py-3 flex items-center justify-between gap-3"
+                  type="button"
+                  onClick={() =>
+                    onSelectSport({
+                      gameId: row.gameId,
+                      division: row.division,
+                      tab: 'matches',
+                      focus: 'ongoing',
+                    })
+                  }
+                  className="w-full text-left px-4 py-3 flex items-center justify-between gap-3 hover:bg-nested transition-colors duration-150"
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     {row.iconKey && (
@@ -122,7 +137,7 @@ export function ScoreboardTab({ loading, scoreboard }: ScoreboardTabProps) {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2.5 shrink-0">
+                  <div className="flex items-center gap-2 shrink-0">
                     <span
                       className={`inline-flex items-center gap-1.5 text-xs font-semibold ${
                         isBlue ? 'text-blue-light' : 'text-red-light'
@@ -139,8 +154,13 @@ export function ScoreboardTab({ loading, scoreboard }: ScoreboardTabProps) {
                     <span className="px-2 py-0.5 rounded-md bg-nested border border-edge text-xs font-semibold text-fg tabular-nums">
                       +{formatPoints(row.pointsAwarded)} pts
                     </span>
+                    <ChevronRight
+                      size={16}
+                      className="text-fg-muted shrink-0"
+                      aria-hidden="true"
+                    />
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>
@@ -158,9 +178,18 @@ export function ScoreboardTab({ loading, scoreboard }: ScoreboardTabProps) {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {scoreboard.sportRows.map((row) => (
-              <div
+              <button
                 key={row.id}
-                className="bg-surface border border-edge rounded-xl p-4 space-y-3"
+                type="button"
+                onClick={() =>
+                  onSelectSport({
+                    gameId: row.game.id,
+                    division: row.division,
+                    tab: 'matches',
+                    focus: 'ongoing',
+                  })
+                }
+                className="w-full text-left bg-surface border border-edge hover:border-edge-hover rounded-xl p-4 space-y-3 transition-colors duration-150"
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
@@ -171,7 +200,14 @@ export function ScoreboardTab({ loading, scoreboard }: ScoreboardTabProps) {
                       {row.title}
                     </h3>
                   </div>
-                  <StatusPill status={row.status} />
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <StatusPill status={row.status} />
+                    <ChevronRight
+                      size={16}
+                      className="text-fg-muted shrink-0"
+                      aria-hidden="true"
+                    />
+                  </div>
                 </div>
 
                 <div className="flex items-center justify-between pt-2 border-t border-edge text-xs tabular-nums">
@@ -184,7 +220,7 @@ export function ScoreboardTab({ loading, scoreboard }: ScoreboardTabProps) {
                     <span>Red {formatPoints(row.redPoints)}</span>
                   </span>
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         )}
