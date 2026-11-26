@@ -39,7 +39,7 @@ import {
   deletePlayer,
   ensureAnonymousAuth,
   renameChurchAndUpdatePlayers,
-  resetAllTeamAssignments,
+  resetWholeEvent,
   saveInitialPins,
   saveProgram,
   saveSeparations,
@@ -723,13 +723,9 @@ export default function App() {
     }
   }
 
-  async function handleResetAllTeams() {
-    try {
-      await resetAllTeamAssignments(players);
-      showToast('success', 'All team assignments reset to Unassigned.');
-    } catch (err) {
-      showToast('error', err instanceof Error ? err.message : 'Failed to reset teams.');
-    }
+  async function handleResetEvent() {
+    await resetWholeEvent();
+    showToast('success', 'Event reset');
   }
 
   function handleToggleTeamGroupKey(groupKey: string) {
@@ -971,6 +967,8 @@ export default function App() {
               games={games}
               players={players}
               massGamesByGameId={massGamesByGameId}
+              bracketsByGameId={bracketsByGameId}
+              pairsByGameId={pairsByGameId}
               separations={separations}
               churches={churches}
               onChangeRole={handleSetRole}
@@ -986,7 +984,7 @@ export default function App() {
               onAddChurch={handleAddChurch}
               onRenameChurch={handleRenameChurch}
               onDeleteChurch={handleDeleteChurch}
-              onResetAllTeams={handleResetAllTeams}
+              onResetEvent={handleResetEvent}
               onShowToast={showToast}
             />
           )}

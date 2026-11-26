@@ -5,6 +5,7 @@ import {
   deleteDoc,
   doc,
   getDocFromServer,
+  getDocs,
   initializeFirestore,
   onSnapshot,
   orderBy,
@@ -1268,27 +1269,76 @@ export async function assignBulkTeams(
   }
 }
 
-export async function resetAllTeamAssignments(players: Player[]): Promise<void> {
-  const assigned = players.filter((p) => p.team !== null);
-  if (assigned.length === 0) return;
+export async function resetWholeEvent(): Promise<void> {
+  const readCollection = async (name: string) => {
+    try {
+      return await getDocs(collection(db, name));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.LIST, name);
+    }
+  };
+
+  const [playersSnap, bracketsSnap, pairsSnap, massSnap] = await Promise.all([
+    readCollection('players'),
+    readCollection('brackets'),
+    readCollection('pairs'),
+    readCollection('massgames'),
+  ]);
+
+  type ResetOp =
+    | { kind: 'clearTeam'; id: string }
+    | { kind: 'deleteDoc'; col: 'brackets' | 'pairs'; id: string }
+    | { kind: 'clearMass'; id: string; items: MassGameItem[] };
+
+  const ops: ResetOp[] = [];
+
+  for (const d of playersSnap.docs) {
+    const team = (d.data() as Partial<Player>).team;
+    if (team !== null && team !== undefined) {
+      ops.push({ kind: 'clearTeam', id: d.id });
+    }
+  }
+  for (const d of bracketsSnap.docs) {
+    ops.push({ kind: 'deleteDoc', col: 'brackets', id: d.id });
+  }
+  for (const d of pairsSnap.docs) {
+    ops.push({ kind: 'deleteDoc', col: 'pairs', id: d.id });
+  }
+  for (const d of massSnap.docs) {
+    const normalized = normalizeMassGameDoc(d.data() as Partial<MassGameDoc>);
+    if (normalized.items.some((item) => item.winner !== null)) {
+      ops.push({
+        kind: 'clearMass',
+        id: d.id,
+        items: normalized.items.map((item) => ({ ...item, winner: null })),
+      });
+    }
+  }
+
+  if (ops.length === 0) return;
 
   const now = Date.now();
   const CHUNK_SIZE = 400;
 
   try {
-    for (let i = 0; i < assigned.length; i += CHUNK_SIZE) {
+    for (let i = 0; i < ops.length; i += CHUNK_SIZE) {
       const batch = writeBatch(db);
-      const chunk = assigned.slice(i, i + CHUNK_SIZE);
-      for (const player of chunk) {
-        batch.update(doc(db, 'players', player.id), {
-          team: null,
-          updatedAt: now,
-        });
+      for (const op of ops.slice(i, i + CHUNK_SIZE)) {
+        if (op.kind === 'clearTeam') {
+          batch.update(doc(db, 'players', op.id), { team: null });
+        } else if (op.kind === 'deleteDoc') {
+          batch.delete(doc(db, op.col, op.id));
+        } else {
+          batch.update(doc(db, 'massgames', op.id), {
+            items: op.items,
+            updatedAt: now,
+          });
+        }
       }
       await batch.commit();
     }
   } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, 'players');
+    handleFirestoreError(error, OperationType.WRITE, 'reset');
   }
 }
 

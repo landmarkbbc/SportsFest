@@ -12,10 +12,12 @@ import {
 } from 'lucide-react';
 import {
   AppSettings,
+  Bracket,
   ELIGIBILITY_LABELS,
   GAME_SESSION_LABELS,
   GAME_TYPE_LABELS,
   Game,
+  GamePairs,
   MassGameDoc,
   MassGameItem,
   Player,
@@ -36,6 +38,8 @@ interface SettingsTabProps {
   games: Game[];
   players: Player[];
   massGamesByGameId: Map<string, MassGameDoc>;
+  bracketsByGameId: Map<string, Bracket>;
+  pairsByGameId: Map<string, GamePairs>;
   separations: SeparationPair[];
   churches: string[];
   onChangeRole: (role: Role) => void;
@@ -57,13 +61,24 @@ interface SettingsTabProps {
   onAddChurch: (name: string) => Promise<string>;
   onRenameChurch: (oldName: string, newName: string) => Promise<void>;
   onDeleteChurch: (name: string) => Promise<void>;
-  onResetAllTeams: () => Promise<void>;
+  onResetEvent: () => Promise<void>;
   onShowToast: (type: 'success' | 'error', text: string) => void;
 }
 
 function clampPoints(val: number): number {
   if (!Number.isFinite(val)) return 0;
   return Math.max(0, Math.min(99, Math.trunc(val)));
+}
+
+function extractErrorMessage(err: unknown, fallback: string): string {
+  if (!(err instanceof Error)) return fallback;
+  try {
+    const parsed = JSON.parse(err.message) as { error?: unknown };
+    if (typeof parsed.error === 'string' && parsed.error) return parsed.error;
+  } catch {
+    // Plain error message
+  }
+  return err.message || fallback;
 }
 
 function PointsGameRow({
@@ -240,6 +255,8 @@ export function SettingsTab({
   games,
   players,
   massGamesByGameId,
+  bracketsByGameId,
+  pairsByGameId,
   separations,
   churches,
   onChangeRole,
@@ -253,7 +270,7 @@ export function SettingsTab({
   onAddChurch,
   onRenameChurch,
   onDeleteChurch,
-  onResetAllTeams,
+  onResetEvent,
   onShowToast,
 }: SettingsTabProps) {
   const isAdmin = role === 'admin';
@@ -276,10 +293,11 @@ export function SettingsTab({
   const [deleteTargetGame, setDeleteTargetGame] = useState<Game | null>(null);
   const [deletingGame, setDeletingGame] = useState(false);
 
-  // Double confirmation for Reset all team assignments
-  const [resetStep1Open, setResetStep1Open] = useState(false);
-  const [resetStep2Open, setResetStep2Open] = useState(false);
-  const [resettingTeams, setResettingTeams] = useState(false);
+  // Reset whole event confirmation state
+  const [resetDialogOpen, setResetDialogOpen] = useState(false);
+  const [backupBeforeReset, setBackupBeforeReset] = useState(true);
+  const [resetConfirmText, setResetConfirmText] = useState('');
+  const [resettingEvent, setResettingEvent] = useState(false);
 
   // Accordion states (collapsed by default, not remembered)
   const [pointsOpen, setPointsOpen] = useState(false);
@@ -299,6 +317,19 @@ export function SettingsTab({
     () => players.filter((p) => p.team !== null).length,
     [players]
   );
+  const bracketCount = bracketsByGameId.size;
+  const pairsCount = pairsByGameId.size;
+  const massResultCount = useMemo(() => {
+    let count = 0;
+    for (const docItem of massGamesByGameId.values()) {
+      for (const item of docItem.items) {
+        if (item.winner !== null) count += 1;
+      }
+    }
+    return count;
+  }, [massGamesByGameId]);
+  const canResetEvent =
+    assignedCount > 0 || bracketCount > 0 || pairsCount > 0 || massResultCount > 0;
 
   async function handlePinSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -385,7 +416,7 @@ export function SettingsTab({
     }
   }
 
-  function handleExportJson() {
+  function downloadJsonBackup() {
     const payload = {
       exportedAt: new Date().toISOString(),
       games,
@@ -400,16 +431,33 @@ export function SettingsTab({
     a.download = `sports-fest-data-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  function handleExportJson() {
+    downloadJsonBackup();
     onShowToast('success', 'Exported all data as JSON.');
   }
 
-  async function handleFinalResetTeams() {
-    setResettingTeams(true);
+  function openResetDialog() {
+    setBackupBeforeReset(true);
+    setResetConfirmText('');
+    setResetDialogOpen(true);
+  }
+
+  async function handleConfirmResetEvent() {
+    if (resetConfirmText.trim().toUpperCase() !== 'RESET' || resettingEvent) return;
+    setResettingEvent(true);
     try {
-      await onResetAllTeams();
-      setResetStep2Open(false);
+      if (backupBeforeReset) {
+        downloadJsonBackup();
+      }
+      await onResetEvent();
+      setResetDialogOpen(false);
+      setResetConfirmText('');
+    } catch (err) {
+      onShowToast('error', extractErrorMessage(err, 'Failed to reset event.'));
     } finally {
-      setResettingTeams(false);
+      setResettingEvent(false);
     }
   }
 
@@ -726,11 +774,11 @@ export function SettingsTab({
           {isAdmin && (
             <button
               type="button"
-              disabled={assignedCount === 0}
-              onClick={() => setResetStep1Open(true)}
+              disabled={!canResetEvent}
+              onClick={openResetDialog}
               className="w-full min-h-[44px] px-4 py-2.5 rounded-xl border border-status-amber-edge bg-status-amber-bg text-sm font-medium text-status-amber-fg hover:opacity-90 flex items-center justify-between transition-opacity duration-150 disabled:opacity-50"
             >
-              <span>Reset all team assignments ({assignedCount})</span>
+              <span>Reset teams, brackets and scores</span>
               <RotateCcw size={20} />
             </button>
           )}
@@ -769,28 +817,81 @@ export function SettingsTab({
         busy={deletingGame}
       />
 
-      {/* Double Confirmation for Reset All Team Assignments */}
-      <ConfirmDialog
-        open={resetStep1Open}
-        title="Reset All Team Assignments?"
-        description={`This will clear Blue and Red team assignments for ${assignedCount} players and set everyone back to Unassigned.`}
-        confirmLabel="Continue"
-        onConfirm={() => {
-          setResetStep1Open(false);
-          setResetStep2Open(true);
-        }}
-        onCancel={() => setResetStep1Open(false)}
-      />
+      {/* Reset the whole event dialog */}
+      {resetDialogOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-overlay flex items-end sm:items-center justify-center p-0 sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="reset-event-title"
+        >
+          <div className="bg-surface w-full sm:max-w-md rounded-t-2xl sm:rounded-xl border border-edge p-6 shadow-xl space-y-4 pb-safe">
+            <h2 id="reset-event-title" className="text-[16px] font-semibold text-fg">
+              Reset the whole event?
+            </h2>
 
-      <ConfirmDialog
-        open={resetStep2Open}
-        title="Confirm Permanent Reset"
-        description="Are you sure? All current Blue and Red team assignments will be erased across all synced devices."
-        confirmLabel="Yes, Reset All Teams"
-        onConfirm={handleFinalResetTeams}
-        onCancel={() => setResetStep2Open(false)}
-        busy={resettingTeams}
-      />
+            <ul className="text-sm text-fg space-y-1 tabular-nums">
+              <li>{assignedCount} players&apos; teams will be cleared</li>
+              <li>{bracketCount} brackets will be deleted</li>
+              <li>{pairsCount} pairs sets will be deleted</li>
+              <li>{massResultCount} mass game results will be cleared</li>
+            </ul>
+
+            <p className="text-xs text-fg-muted">
+              Players, games, points, program, churches and keep-apart rules are kept.
+            </p>
+
+            <label className="flex items-center gap-2.5 text-sm text-fg cursor-pointer select-none min-h-[36px]">
+              <input
+                type="checkbox"
+                checked={backupBeforeReset}
+                disabled={resettingEvent}
+                onChange={(e) => setBackupBeforeReset(e.target.checked)}
+                className="w-4 h-4 rounded border-edge accent-fg"
+              />
+              <span>Download a backup (JSON) first</span>
+            </label>
+
+            <div>
+              <label
+                htmlFor="reset-confirm-input"
+                className="block text-xs font-medium text-fg-muted mb-1.5"
+              >
+                Type RESET to confirm
+              </label>
+              <input
+                id="reset-confirm-input"
+                type="text"
+                autoComplete="off"
+                disabled={resettingEvent}
+                value={resetConfirmText}
+                onChange={(e) => setResetConfirmText(e.target.value)}
+                placeholder="RESET"
+                className="w-full min-h-[44px] px-3 py-2 rounded-xl border border-edge bg-nested text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:ring-2 focus:ring-fg disabled:opacity-60"
+              />
+            </div>
+
+            <div className="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end pt-1">
+              <button
+                type="button"
+                disabled={resettingEvent}
+                onClick={() => setResetDialogOpen(false)}
+                className="min-h-[44px] px-4 py-2 rounded-xl border border-edge text-sm font-medium text-fg bg-transparent hover:bg-nested transition-colors duration-150 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={resettingEvent || resetConfirmText.trim().toUpperCase() !== 'RESET'}
+                onClick={() => void handleConfirmResetEvent()}
+                className="min-h-[44px] px-4 py-2 rounded-xl text-sm font-medium bg-status-red-bg border border-status-red-edge text-status-red-fg hover:opacity-90 transition-opacity duration-150 disabled:opacity-45 disabled:cursor-not-allowed"
+              >
+                {resettingEvent ? 'Resetting...' : 'Reset everything'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
