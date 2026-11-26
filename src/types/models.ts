@@ -141,6 +141,7 @@ export interface PairMember {
   name: string;
   level: SkillLevel;
   dept: Department;
+  withdrawn?: boolean;
 }
 
 export interface GamePair {

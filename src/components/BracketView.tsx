@@ -778,7 +778,7 @@ export function BracketView({
   const canScore = role === 'admin' || role === 'scorer';
   const isAdmin = role === 'admin';
   const isPairsGame = game.type === 'pairs';
-  const showLevelChip = game.usesSkillLevel || isPairsGame;
+  const showLevelChip = game.usesSkillLevel;
   const allowsDraw =
     Boolean(game.allowsDraw) && !isPairsGame && bracket?.format !== 'teammatch';
 
@@ -858,15 +858,33 @@ export function BracketView({
                       key={pair.id}
                       className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-surface border border-edge"
                     >
-                      <span className="text-xs font-medium text-fg break-words leading-snug min-w-0 flex-1">
-                        {pair.members[0].name} &amp; {pair.members[1].name}
+                      <span className="text-xs font-medium break-words leading-snug min-w-0 flex-1 inline-flex flex-wrap items-center gap-1">
+                        {pair.members.map((m, idx) => (
+                          <span key={m.playerId} className="inline-flex items-center gap-1">
+                            {idx > 0 && <span className="text-fg-muted">&amp;</span>}
+                            <span
+                              className={
+                                m.withdrawn ? 'text-fg-muted line-through' : 'text-fg'
+                              }
+                            >
+                              {m.name}
+                            </span>
+                            {m.withdrawn && (
+                              <span className="inline-flex items-center px-1 py-0.2 rounded text-[10px] font-medium bg-status-amber-bg border border-status-amber-edge text-status-amber-fg">
+                                Withdrawn
+                              </span>
+                            )}
+                          </span>
+                        ))}
                       </span>
-                      <span
-                        title={`Combined level ${pair.combined}`}
-                        className="px-1.5 py-0.5 rounded bg-nested border border-edge text-[11px] font-medium text-fg tabular-nums shrink-0"
-                      >
-                        L{pair.combined}
-                      </span>
+                      {showLevelChip && (
+                        <span
+                          title={`Combined level ${pair.combined}`}
+                          className="px-1.5 py-0.5 rounded bg-nested border border-edge text-[11px] font-medium text-fg tabular-nums shrink-0"
+                        >
+                          L{pair.combined}
+                        </span>
+                      )}
                     </li>
                   ))}
                 </ul>

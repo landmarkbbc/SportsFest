@@ -116,11 +116,13 @@ function PairListRow({
   pair,
   gameId,
   playerById,
+  showLevel,
   onTapMember,
 }: {
   pair: GamePair;
   gameId: string;
   playerById: ReadonlyMap<string, Player>;
+  showLevel: boolean;
   onTapMember: (player: Player, entry: PlayerEntry | undefined) => void;
 }) {
   return (
@@ -129,6 +131,7 @@ function PairListRow({
         {pair.members.map((member) => {
           const livePlayer = playerById.get(member.playerId);
           const entry = livePlayer?.entries.find((e) => e.gameId === gameId);
+          const isWithdrawn = Boolean(member.withdrawn);
           return (
             <button
               key={member.playerId}
@@ -137,23 +140,34 @@ function PairListRow({
               onClick={() => livePlayer && onTapMember(livePlayer, entry)}
               className="w-full text-left flex items-center flex-wrap gap-x-1.5 gap-y-1 px-1.5 -mx-1.5 py-0.5 rounded-lg hover:bg-nested transition-colors duration-150 disabled:opacity-75"
             >
-              <span className="text-sm font-medium text-fg leading-snug break-words">
+              <span
+                className={`text-sm font-medium leading-snug break-words ${
+                  isWithdrawn ? 'text-fg-muted line-through' : 'text-fg'
+                }`}
+              >
                 {livePlayer?.name ?? member.name}
               </span>
               <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-nested border border-edge text-fg-muted shrink-0">
                 {livePlayer?.department ?? member.dept}
               </span>
               <SlotBadge slot={entry?.slot} />
+              {isWithdrawn && (
+                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-status-amber-bg border border-status-amber-edge text-status-amber-fg shrink-0">
+                  Withdrawn
+                </span>
+              )}
             </button>
           );
         })}
       </div>
-      <span
-        title={`Combined level ${pair.combined}`}
-        className="px-1.5 py-0.5 rounded-md bg-nested border border-edge text-xs font-medium text-fg tabular-nums shrink-0 mt-0.5"
-      >
-        L{pair.combined}
-      </span>
+      {showLevel && (
+        <span
+          title={`Combined level ${pair.combined}`}
+          className="px-1.5 py-0.5 rounded-md bg-nested border border-edge text-xs font-medium text-fg tabular-nums shrink-0 mt-0.5"
+        >
+          L{pair.combined}
+        </span>
+      )}
     </li>
   );
 }
@@ -262,16 +276,6 @@ export function SportDetailView({
   const gamePairs =
     game.type === 'pairs' ? pairsByGameId.get(game.id) ?? null : null;
 
-  const pairedPlayerIds = useMemo(() => {
-    const ids = new Set<string>();
-    if (!gamePairs) return ids;
-    for (const pair of gamePairs.pairs) {
-      ids.add(pair.members[0].playerId);
-      ids.add(pair.members[1].playerId);
-    }
-    return ids;
-  }, [gamePairs]);
-
   const bluePairs = useMemo(
     () => (gamePairs ? gamePairs.pairs.filter((p) => p.team === 'blue') : []),
     [gamePairs]
@@ -280,15 +284,13 @@ export function SportDetailView({
     () => (gamePairs ? gamePairs.pairs.filter((p) => p.team === 'red') : []),
     [gamePairs]
   );
-  const bluePartnerless = useMemo(
-    () =>
-      gamePairs ? blueGroup.filter((item) => !pairedPlayerIds.has(item.player.id)) : [],
-    [gamePairs, blueGroup, pairedPlayerIds]
+  const blueUnpaired = useMemo(
+    () => (gamePairs ? gamePairs.unpaired.filter((u) => u.team === 'blue') : []),
+    [gamePairs]
   );
-  const redPartnerless = useMemo(
-    () =>
-      gamePairs ? redGroup.filter((item) => !pairedPlayerIds.has(item.player.id)) : [],
-    [gamePairs, redGroup, pairedPlayerIds]
+  const redUnpaired = useMemo(
+    () => (gamePairs ? gamePairs.unpaired.filter((u) => u.team === 'red') : []),
+    [gamePairs]
   );
 
   function isPlayerInCurrentBracketOrPairs(player: Player): boolean {
@@ -342,28 +344,42 @@ export function SportDetailView({
     return false;
   }
 
+  function formatWriteError(err: unknown, fallback: string): string {
+    if (!(err instanceof Error)) return fallback;
+    try {
+      const parsed = JSON.parse(err.message) as { error?: unknown };
+      if (typeof parsed.error === 'string' && parsed.error) return parsed.error;
+    } catch {
+      // Plain error message
+    }
+    return err.message || fallback;
+  }
+
   function handleTapPlayer(player: Player, entry?: PlayerEntry) {
     if (role === 'viewer') {
       onOpenPlayerDetails(player);
       return;
     }
     const targetEntry = entry ?? player.entries.find((e) => e.gameId === game.id);
-    if (!targetEntry) return;
+    if (!targetEntry) {
+      onOpenPlayerDetails(player);
+      return;
+    }
     setActionTarget({ player, entry: targetEntry });
   }
 
   async function executeRemove(
     player: Player,
-    entry: PlayerEntry,
+    _entry: PlayerEntry,
     inBracket: boolean,
     withUndoToast: boolean
   ) {
     setRemoving(true);
     try {
-      const removed = await removePlayerGameEntry(player.id, game.id);
+      const result = await removePlayerGameEntry(player.id, game.id);
       setActionTarget(null);
       setConfirmRemoveTarget(null);
-      if (!removed) return;
+      if (!result) return;
 
       if (withUndoToast) {
         onShowToast('success', `Removed from ${game.name}`, {
@@ -375,11 +391,11 @@ export function SportDetailView({
             label: 'Undo',
             onClick: async () => {
               try {
-                await restorePlayerGameEntry(player.id, removed);
+                await restorePlayerGameEntry(player.id, result);
               } catch (err) {
                 onShowToast(
                   'error',
-                  err instanceof Error ? err.message : 'Could not restore sport entry.'
+                  formatWriteError(err, 'Could not restore sport entry.')
                 );
               }
             },
@@ -391,7 +407,7 @@ export function SportDetailView({
     } catch (err) {
       onShowToast(
         'error',
-        err instanceof Error ? err.message : `Failed to remove from ${game.name}.`
+        formatWriteError(err, `Failed to remove from ${game.name}.`)
       );
     } finally {
       setRemoving(false);
@@ -626,7 +642,7 @@ export function SportDetailView({
           <div className="grid grid-cols-2 gap-3 items-start">
             <div className="bg-surface border border-edge rounded-xl p-3 sm:p-4">
               {gamePairs ? (
-                bluePairs.length === 0 && bluePartnerless.length === 0 ? (
+                bluePairs.length === 0 && blueUnpaired.length === 0 ? (
                   <p className="text-xs text-fg-muted">No Blue players yet.</p>
                 ) : (
                   <ul>
@@ -636,31 +652,39 @@ export function SportDetailView({
                         pair={pair}
                         gameId={game.id}
                         playerById={playerById}
+                        showLevel={game.usesSkillLevel}
                         onTapMember={handleTapPlayer}
                       />
                     ))}
-                    {bluePartnerless.map((item) => (
-                      <li key={item.player.id} className="border-b border-edge last:border-b-0">
-                        <button
-                          type="button"
-                          onClick={() => handleTapPlayer(item.player, item.entry)}
-                          className="w-full text-left flex items-start justify-between gap-2 py-2 px-1.5 -mx-1.5 rounded-lg hover:bg-nested transition-colors duration-150"
-                        >
-                          <div className="flex items-center flex-wrap gap-x-1.5 gap-y-1 min-w-0 flex-1">
-                            <span className="text-sm font-medium text-fg-muted leading-snug break-words">
-                              {item.player.name}
-                            </span>
+                    {blueUnpaired.map((u) => {
+                      const livePlayer = playerById.get(u.playerId);
+                      const entry = livePlayer?.entries.find((e) => e.gameId === game.id);
+                      return (
+                        <li key={u.playerId} className="border-b border-edge last:border-b-0">
+                          <button
+                            type="button"
+                            disabled={!livePlayer}
+                            onClick={() => livePlayer && handleTapPlayer(livePlayer, entry)}
+                            className="w-full text-left flex items-start justify-between gap-2 py-2 px-1.5 -mx-1.5 rounded-lg hover:bg-nested transition-colors duration-150 disabled:opacity-75"
+                          >
+                            <div className="flex items-center flex-wrap gap-x-1.5 gap-y-1 min-w-0 flex-1">
+                              <span className="text-sm font-medium text-fg-muted leading-snug break-words">
+                                {livePlayer?.name ?? u.name}
+                              </span>
+                              {livePlayer && (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-nested border border-edge text-fg-muted shrink-0">
+                                  {livePlayer.department}
+                                </span>
+                              )}
+                              <SlotBadge slot={entry?.slot} />
+                            </div>
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-nested border border-edge text-fg-muted shrink-0">
-                              {item.player.department}
+                              No partner
                             </span>
-                            <SlotBadge slot={item.entry.slot} />
-                          </div>
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-nested border border-edge text-fg-muted shrink-0">
-                            No partner
-                          </span>
-                        </button>
-                      </li>
-                    ))}
+                          </button>
+                        </li>
+                      );
+                    })}
                   </ul>
                 )
               ) : blueGroup.length === 0 ? (
@@ -681,7 +705,7 @@ export function SportDetailView({
 
             <div className="bg-surface border border-edge rounded-xl p-3 sm:p-4">
               {gamePairs ? (
-                redPairs.length === 0 && redPartnerless.length === 0 ? (
+                redPairs.length === 0 && redUnpaired.length === 0 ? (
                   <p className="text-xs text-fg-muted">No Red players yet.</p>
                 ) : (
                   <ul>
@@ -691,31 +715,39 @@ export function SportDetailView({
                         pair={pair}
                         gameId={game.id}
                         playerById={playerById}
+                        showLevel={game.usesSkillLevel}
                         onTapMember={handleTapPlayer}
                       />
                     ))}
-                    {redPartnerless.map((item) => (
-                      <li key={item.player.id} className="border-b border-edge last:border-b-0">
-                        <button
-                          type="button"
-                          onClick={() => handleTapPlayer(item.player, item.entry)}
-                          className="w-full text-left flex items-start justify-between gap-2 py-2 px-1.5 -mx-1.5 rounded-lg hover:bg-nested transition-colors duration-150"
-                        >
-                          <div className="flex items-center flex-wrap gap-x-1.5 gap-y-1 min-w-0 flex-1">
-                            <span className="text-sm font-medium text-fg-muted leading-snug break-words">
-                              {item.player.name}
-                            </span>
+                    {redUnpaired.map((u) => {
+                      const livePlayer = playerById.get(u.playerId);
+                      const entry = livePlayer?.entries.find((e) => e.gameId === game.id);
+                      return (
+                        <li key={u.playerId} className="border-b border-edge last:border-b-0">
+                          <button
+                            type="button"
+                            disabled={!livePlayer}
+                            onClick={() => livePlayer && handleTapPlayer(livePlayer, entry)}
+                            className="w-full text-left flex items-start justify-between gap-2 py-2 px-1.5 -mx-1.5 rounded-lg hover:bg-nested transition-colors duration-150 disabled:opacity-75"
+                          >
+                            <div className="flex items-center flex-wrap gap-x-1.5 gap-y-1 min-w-0 flex-1">
+                              <span className="text-sm font-medium text-fg-muted leading-snug break-words">
+                                {livePlayer?.name ?? u.name}
+                              </span>
+                              {livePlayer && (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-nested border border-edge text-fg-muted shrink-0">
+                                  {livePlayer.department}
+                                </span>
+                              )}
+                              <SlotBadge slot={entry?.slot} />
+                            </div>
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-nested border border-edge text-fg-muted shrink-0">
-                              {item.player.department}
+                              No partner
                             </span>
-                            <SlotBadge slot={item.entry.slot} />
-                          </div>
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-nested border border-edge text-fg-muted shrink-0">
-                            No partner
-                          </span>
-                        </button>
-                      </li>
-                    ))}
+                          </button>
+                        </li>
+                      );
+                    })}
                   </ul>
                 )
               ) : redGroup.length === 0 ? (

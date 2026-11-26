@@ -219,12 +219,15 @@ export function hasPairsRosterChanged(
   return false;
 }
 
-export function pairToBracketSnapshot(pair: GamePair): BracketSlotSnapshot {
+export function pairToBracketSnapshot(
+  pair: GamePair,
+  usesSkillLevel = true
+): BracketSlotSnapshot {
   return {
     playerId: pair.id,
     name: `${pair.members[0].name} & ${pair.members[1].name}`,
     team: pair.team,
-    level: pair.combined,
+    level: usesSkillLevel ? pair.combined : 0,
     dept: '',
   };
 }

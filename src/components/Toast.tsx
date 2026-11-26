@@ -33,7 +33,7 @@ export function Toast({ toast, onDismiss }: ToastProps) {
       <div
         className={`pointer-events-auto flex items-center gap-2.5 px-3 py-2 border shadow-[0_6px_16px_rgba(0,0,0,0.45)] bg-surface transition-opacity duration-150 ${
           isRich ? 'rounded-xl' : 'rounded-full'
-        } ${isSuccess ? 'border-edge' : 'border-status-amber-edge'}`}
+        } ${isSuccess ? 'border-edge' : 'border-status-red-edge'}`}
       >
         <button
           type="button"
@@ -44,10 +44,16 @@ export function Toast({ toast, onDismiss }: ToastProps) {
           {isSuccess ? (
             <CheckCircle2 size={16} className="text-status-green-fg shrink-0 mt-0.5" />
           ) : (
-            <AlertCircle size={16} className="text-status-amber-fg shrink-0 mt-0.5" />
+            <AlertCircle size={16} className="text-status-red-fg shrink-0 mt-0.5" />
           )}
           <div className="min-w-0">
-            <span className="block text-[13px] leading-snug text-fg">{toast.text}</span>
+            <span
+              className={`block text-[13px] leading-snug ${
+                isSuccess ? 'text-fg' : 'text-status-red-fg'
+              }`}
+            >
+              {toast.text}
+            </span>
             {toast.warningText && (
               <span className="block text-xs leading-snug text-status-amber-fg mt-0.5">
                 {toast.warningText}

@@ -377,7 +377,9 @@ export function buildInitialBracket(
     if (!options?.gamePairs) {
       throw new Error('Make pairs first before creating a bracket.');
     }
-    const snapshots = options.gamePairs.pairs.map(pairToBracketSnapshot);
+    const snapshots = options.gamePairs.pairs.map((p) =>
+      pairToBracketSnapshot(p, game.usesSkillLevel)
+    );
     blue = sortByLevelDesc(snapshots.filter((s) => s.team === 'blue'));
     red = sortByLevelDesc(snapshots.filter((s) => s.team === 'red'));
     if (blue.length === 0 || red.length === 0) {

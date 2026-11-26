@@ -25,11 +25,14 @@ import {
   DEFAULT_POINTS_PER_MATCH_WIN,
   EventProgram,
   Game,
+  GamePair,
   GamePairs,
+  PairMember,
   Player,
   PlayerEntry,
   SEED_GAMES,
   TeamId,
+  UnpairedPlayer,
   getDefaultGameAllowsDraw,
   getDefaultGameHasDivisions,
   getDefaultGameIconKey,
@@ -628,18 +631,65 @@ export async function deletePlayer(playerId: string): Promise<void> {
   }
 }
 
+export type PairsUndoState =
+  | { kind: 'none' }
+  | { kind: 'clearWithdrawn' }
+  | { kind: 'restoreUnpaired'; unpairedItem: UnpairedPlayer }
+  | { kind: 'restorePair'; pair: GamePair; pairIndex: number };
+
+export interface RemovePlayerGameResult {
+  entry: PlayerEntry;
+  pairsUndo: PairsUndoState;
+}
+
+function sanitizePairMember(m: PairMember): PairMember {
+  return {
+    playerId: m.playerId,
+    name: m.name,
+    level: m.level,
+    dept: m.dept,
+    ...(m.withdrawn ? { withdrawn: true } : {}),
+  };
+}
+
+function sanitizePair(p: GamePair): GamePair {
+  return {
+    id: p.id,
+    team: p.team,
+    members: [sanitizePairMember(p.members[0]), sanitizePairMember(p.members[1])],
+    combined: p.combined,
+  };
+}
+
+function sanitizeUnpaired(u: UnpairedPlayer): UnpairedPlayer {
+  return {
+    playerId: u.playerId,
+    name: u.name,
+    team: u.team,
+  };
+}
+
 export async function removePlayerGameEntry(
   playerId: string,
   gameId: string
-): Promise<PlayerEntry | null> {
-  const ref = doc(db, 'players', playerId);
+): Promise<RemovePlayerGameResult | null> {
+  const playerRef = doc(db, 'players', playerId);
+  const pairsRef = doc(db, 'pairs', gameId);
+  const bracketRef = doc(db, 'brackets', gameId);
+
   try {
     return await runTransaction(db, async (tx) => {
-      const snap = await tx.get(ref);
-      if (!snap.exists()) {
+      const [playerSnap, pairsSnap, bracketSnap] = await Promise.all([
+        tx.get(playerRef),
+        tx.get(pairsRef),
+        tx.get(bracketRef),
+      ]);
+
+      if (!playerSnap.exists()) {
         throw new Error('Player not found.');
       }
-      const data = snap.data() as Player;
+
+      const data = playerSnap.data() as Player;
       const currentEntries = Array.isArray(data.entries) ? data.entries : [];
       const removed = currentEntries.find((e) => e.gameId === gameId) ?? null;
       if (!removed) return null;
@@ -653,16 +703,87 @@ export async function removePlayerGameEntry(
           overrideLevel: e.overrideLevel ?? null,
         }));
 
-      tx.update(ref, {
+      let pairsUndo: PairsUndoState = { kind: 'none' };
+
+      if (pairsSnap.exists()) {
+        const pairsData = pairsSnap.data() as Partial<GamePairs>;
+        const currentPairs: GamePair[] = Array.isArray(pairsData.pairs)
+          ? pairsData.pairs.map(sanitizePair)
+          : [];
+        const currentUnpaired: UnpairedPlayer[] = Array.isArray(pairsData.unpaired)
+          ? pairsData.unpaired.map(sanitizeUnpaired)
+          : [];
+
+        const pairIndex = currentPairs.findIndex(
+          (p) => p.members[0].playerId === playerId || p.members[1].playerId === playerId
+        );
+        const unpairedItem = currentUnpaired.find((u) => u.playerId === playerId);
+
+        if (bracketSnap.exists()) {
+          if (pairIndex !== -1) {
+            const nextPairs = currentPairs.map((p, idx) => {
+              if (idx !== pairIndex) return p;
+              return {
+                ...p,
+                members: [
+                  p.members[0].playerId === playerId
+                    ? { ...p.members[0], withdrawn: true }
+                    : p.members[0],
+                  p.members[1].playerId === playerId
+                    ? { ...p.members[1], withdrawn: true }
+                    : p.members[1],
+                ] as [PairMember, PairMember],
+              };
+            });
+            pairsUndo = { kind: 'clearWithdrawn' };
+            tx.update(pairsRef, { pairs: nextPairs });
+          }
+        } else if (pairIndex !== -1) {
+          const targetPair = currentPairs[pairIndex];
+          const partner =
+            targetPair.members[0].playerId === playerId
+              ? targetPair.members[1]
+              : targetPair.members[0];
+          const nextPairs = currentPairs.filter((_, idx) => idx !== pairIndex);
+          const nextUnpaired = currentUnpaired
+            .filter((u) => u.playerId !== playerId)
+            .concat(
+              currentUnpaired.some((u) => u.playerId === partner.playerId)
+                ? []
+                : [{ playerId: partner.playerId, name: partner.name, team: targetPair.team }]
+            );
+          pairsUndo = {
+            kind: 'restorePair',
+            pair: sanitizePair(targetPair),
+            pairIndex,
+          };
+          tx.update(pairsRef, {
+            pairs: nextPairs,
+            unpaired: nextUnpaired,
+          });
+        } else if (unpairedItem) {
+          const nextUnpaired = currentUnpaired.filter((u) => u.playerId !== playerId);
+          pairsUndo = {
+            kind: 'restoreUnpaired',
+            unpairedItem: sanitizeUnpaired(unpairedItem),
+          };
+          tx.update(pairsRef, { unpaired: nextUnpaired });
+        }
+      }
+
+      tx.update(playerRef, {
         entries: remaining,
         updatedAt: Date.now(),
       });
 
       return {
-        slot: removed.slot,
-        gameId: removed.gameId,
-        selfLevel: removed.selfLevel,
-        overrideLevel: removed.overrideLevel ?? null,
+        entry: {
+          slot: removed.slot,
+          gameId: removed.gameId,
+          selfLevel: removed.selfLevel,
+          overrideLevel: removed.overrideLevel ?? null,
+        },
+        pairsUndo,
       };
     });
   } catch (error) {
@@ -675,41 +796,108 @@ export async function removePlayerGameEntry(
 
 export async function restorePlayerGameEntry(
   playerId: string,
-  entry: PlayerEntry
+  result: RemovePlayerGameResult
 ): Promise<void> {
-  const ref = doc(db, 'players', playerId);
+  const { entry, pairsUndo } = result;
+  const playerRef = doc(db, 'players', playerId);
+  const pairsRef = doc(db, 'pairs', entry.gameId);
+
   try {
     await runTransaction(db, async (tx) => {
-      const snap = await tx.get(ref);
-      if (!snap.exists()) {
+      const playerSnap = await tx.get(playerRef);
+      const pairsSnap =
+        pairsUndo.kind !== 'none' ? await tx.get(pairsRef) : null;
+
+      if (!playerSnap.exists()) {
         throw new Error('Player not found.');
       }
-      const data = snap.data() as Player;
+
+      const data = playerSnap.data() as Player;
       const currentEntries = Array.isArray(data.entries) ? data.entries : [];
-      if (currentEntries.some((e) => e.gameId === entry.gameId)) {
-        return;
+      if (!currentEntries.some((e) => e.gameId === entry.gameId)) {
+        if (currentEntries.some((e) => e.slot === entry.slot)) {
+          throw new Error('That slot is now used by another sport.');
+        }
+        const nextEntries = [
+          ...currentEntries.map((e) => ({
+            slot: e.slot,
+            gameId: e.gameId,
+            selfLevel: e.selfLevel,
+            overrideLevel: e.overrideLevel ?? null,
+          })),
+          {
+            slot: entry.slot,
+            gameId: entry.gameId,
+            selfLevel: entry.selfLevel,
+            overrideLevel: entry.overrideLevel ?? null,
+          },
+        ];
+        tx.update(playerRef, {
+          entries: nextEntries,
+          updatedAt: Date.now(),
+        });
       }
-      if (currentEntries.some((e) => e.slot === entry.slot)) {
-        throw new Error('That slot is now used by another sport.');
+
+      if (pairsSnap && pairsSnap.exists()) {
+        const pairsData = pairsSnap.data() as Partial<GamePairs>;
+        const currentPairs: GamePair[] = Array.isArray(pairsData.pairs)
+          ? pairsData.pairs.map(sanitizePair)
+          : [];
+        const currentUnpaired: UnpairedPlayer[] = Array.isArray(pairsData.unpaired)
+          ? pairsData.unpaired.map(sanitizeUnpaired)
+          : [];
+
+        if (pairsUndo.kind === 'clearWithdrawn') {
+          const nextPairs = currentPairs.map((p) => ({
+            ...p,
+            members: [
+              p.members[0].playerId === playerId
+                ? sanitizePairMember({ ...p.members[0], withdrawn: false })
+                : p.members[0],
+              p.members[1].playerId === playerId
+                ? sanitizePairMember({ ...p.members[1], withdrawn: false })
+                : p.members[1],
+            ] as [PairMember, PairMember],
+          }));
+          tx.update(pairsRef, { pairs: nextPairs });
+        } else if (pairsUndo.kind === 'restoreUnpaired') {
+          const alreadyInPairs = currentPairs.some(
+            (p) => p.members[0].playerId === playerId || p.members[1].playerId === playerId
+          );
+          const alreadyInUnpaired = currentUnpaired.some((u) => u.playerId === playerId);
+          if (!alreadyInPairs && !alreadyInUnpaired) {
+            tx.update(pairsRef, {
+              unpaired: [...currentUnpaired, sanitizeUnpaired(pairsUndo.unpairedItem)],
+            });
+          }
+        } else if (pairsUndo.kind === 'restorePair') {
+          const restored = sanitizePair(pairsUndo.pair);
+          const idA = restored.members[0].playerId;
+          const idB = restored.members[1].playerId;
+          const nextUnpaired = currentUnpaired.filter(
+            (u) => u.playerId !== idA && u.playerId !== idB
+          );
+          const conflict = currentPairs.some(
+            (p) =>
+              p.id === restored.id ||
+              p.members[0].playerId === idA ||
+              p.members[1].playerId === idA ||
+              p.members[0].playerId === idB ||
+              p.members[1].playerId === idB
+          );
+          if (!conflict) {
+            const nextPairs = currentPairs.slice();
+            const insertIdx = Math.max(0, Math.min(pairsUndo.pairIndex, nextPairs.length));
+            nextPairs.splice(insertIdx, 0, restored);
+            tx.update(pairsRef, {
+              pairs: nextPairs,
+              unpaired: nextUnpaired,
+            });
+          } else if (nextUnpaired.length !== currentUnpaired.length) {
+            tx.update(pairsRef, { unpaired: nextUnpaired });
+          }
+        }
       }
-      const nextEntries = [
-        ...currentEntries.map((e) => ({
-          slot: e.slot,
-          gameId: e.gameId,
-          selfLevel: e.selfLevel,
-          overrideLevel: e.overrideLevel ?? null,
-        })),
-        {
-          slot: entry.slot,
-          gameId: entry.gameId,
-          selfLevel: entry.selfLevel,
-          overrideLevel: entry.overrideLevel ?? null,
-        },
-      ];
-      tx.update(ref, {
-        entries: nextEntries,
-        updatedAt: Date.now(),
-      });
     });
   } catch (error) {
     if (

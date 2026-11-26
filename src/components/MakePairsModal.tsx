@@ -155,12 +155,14 @@ export function MakePairsModal({
                   <span className="text-xs font-medium text-fg-muted tabular-nums">
                     Pair {idx + 1}
                   </span>
-                  <span
-                    title={`Combined level ${pair.combined}`}
-                    className="px-2 py-0.5 rounded-md bg-nested border border-edge text-xs font-semibold text-fg tabular-nums"
-                  >
-                    L{pair.combined}
-                  </span>
+                  {game.usesSkillLevel && (
+                    <span
+                      title={`Combined level ${pair.combined}`}
+                      className="px-2 py-0.5 rounded-md bg-nested border border-edge text-xs font-semibold text-fg tabular-nums"
+                    >
+                      L{pair.combined}
+                    </span>
+                  )}
                 </div>
 
                 <div className="space-y-1.5">
@@ -196,16 +198,20 @@ export function MakePairsModal({
                             {member.dept}
                           </span>
                         </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <span className="px-1.5 py-0.5 rounded bg-surface border border-edge text-xs font-medium text-fg tabular-nums">
-                            L{member.level}
-                          </span>
-                          {active && (
-                            <span className="text-[11px] font-semibold text-fg">
-                              Tap again to cancel
-                            </span>
-                          )}
-                        </div>
+                        {(game.usesSkillLevel || active) && (
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {game.usesSkillLevel && (
+                              <span className="px-1.5 py-0.5 rounded bg-surface border border-edge text-xs font-medium text-fg tabular-nums">
+                                L{member.level}
+                              </span>
+                            )}
+                            {active && (
+                              <span className="text-[11px] font-semibold text-fg">
+                                Tap again to cancel
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </button>
                     );
                   })}
@@ -253,16 +259,20 @@ export function MakePairsModal({
                         {u.dept}
                       </span>
                     </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <span className="px-1.5 py-0.5 rounded bg-surface border border-edge text-xs font-medium text-fg tabular-nums">
-                        L{u.level}
-                      </span>
-                      {active && (
-                        <span className="text-[11px] font-semibold text-fg">
-                          Tap again to cancel
-                        </span>
-                      )}
-                    </div>
+                    {(game.usesSkillLevel || active) && (
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {game.usesSkillLevel && (
+                          <span className="px-1.5 py-0.5 rounded bg-surface border border-edge text-xs font-medium text-fg tabular-nums">
+                            L{u.level}
+                          </span>
+                        )}
+                        {active && (
+                          <span className="text-[11px] font-semibold text-fg">
+                            Tap again to cancel
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </button>
                 );
               })}
@@ -270,7 +280,7 @@ export function MakePairsModal({
           </div>
         )}
 
-        {spread && (
+        {game.usesSkillLevel && spread && (
           <p className="text-xs font-medium text-fg-muted tabular-nums px-0.5">
             Pair spread: lowest {spread.min} - highest {spread.max}
           </p>
