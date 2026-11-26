@@ -80,6 +80,85 @@ function isGameEligibleForSlot(slot: EntrySlot, game: Game, gender: Gender): boo
   return true;
 }
 
+export function normalizePlayerName(raw: string): string {
+  return raw
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function levenshteinDistance(a: string, b: string, maxDist: number): number {
+  if (Math.abs(a.length - b.length) > maxDist) return maxDist + 1;
+  const prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  const curr = new Array<number>(b.length + 1);
+  for (let i = 1; i <= a.length; i += 1) {
+    curr[0] = i;
+    let rowMin = curr[0];
+    for (let j = 1; j <= b.length; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+      if (curr[j] < rowMin) rowMin = curr[j];
+    }
+    if (rowMin > maxDist) return maxDist + 1;
+    for (let j = 0; j <= b.length; j += 1) prev[j] = curr[j];
+  }
+  return prev[b.length];
+}
+
+export function findSimilarPlayers(
+  rawName: string,
+  allPlayers: Player[],
+  excludePlayerId?: string | null
+): { matches: Player[]; hasExactMatch: boolean } {
+  const normInput = normalizePlayerName(rawName);
+  if (!normInput) return { matches: [], hasExactMatch: false };
+
+  const inputWords = normInput.split(' ');
+  const inputWordSet = new Set(inputWords);
+  const scored: { player: Player; rank: number }[] = [];
+  let hasExactMatch = false;
+
+  for (const candidate of allPlayers) {
+    if (excludePlayerId && candidate.id === excludePlayerId) continue;
+    const normCand = normalizePlayerName(candidate.name);
+    if (!normCand) continue;
+
+    if (normInput === normCand) {
+      hasExactMatch = true;
+      scored.push({ player: candidate, rank: 0 });
+      continue;
+    }
+
+    const candWords = normCand.split(' ');
+    const candWordSet = new Set(candWords);
+    const allInputInCand = inputWords.every((w) => candWordSet.has(w));
+    const allCandInInput = candWords.every((w) => inputWordSet.has(w));
+
+    if (allInputInCand && allCandInInput) {
+      scored.push({ player: candidate, rank: 1 });
+      continue;
+    }
+    if (allInputInCand || allCandInInput) {
+      scored.push({ player: candidate, rank: 2 });
+      continue;
+    }
+
+    const maxDist = Math.min(normInput.length, normCand.length) < 7 ? 1 : 2;
+    const dist = levenshteinDistance(normInput, normCand, maxDist);
+    if (dist <= maxDist) {
+      scored.push({ player: candidate, rank: 2 + dist });
+    }
+  }
+
+  scored.sort(
+    (a, b) => a.rank - b.rank || a.player.name.localeCompare(b.player.name)
+  );
+  return { matches: scored.map((s) => s.player), hasExactMatch };
+}
+
 export function PlayerFormModal({
   open,
   mode,
@@ -116,10 +195,13 @@ export function PlayerFormModal({
 
   // Validation errors
   const [submitted, setSubmitted] = useState(false);
+  const [debouncedName, setDebouncedName] = useState('');
 
   useEffect(() => {
     if (!open) return;
-    setName(player?.name ?? '');
+    const initialName = player?.name ?? '';
+    setName(initialName);
+    setDebouncedName(initialName);
     setDepartment(player?.department ?? 'YP');
     setGender(player?.gender ?? 'M');
     setDrafts(buildInitialDrafts(player));
@@ -129,6 +211,27 @@ export function PlayerFormModal({
     setConfirmDeleteOpen(false);
     setMoveConfirmData(null);
   }, [open, player, mode]);
+
+  useEffect(() => {
+    if (!open || readOnly) return;
+    if (!name.trim()) {
+      setDebouncedName('');
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setDebouncedName(name);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [open, readOnly, name]);
+
+  const similarMatches = useMemo(() => {
+    if (!open || readOnly) return { matches: [] as Player[], hasExactMatch: false };
+    return findSimilarPlayers(
+      debouncedName,
+      allPlayers,
+      mode === 'edit' && player ? player.id : null
+    );
+  }, [open, readOnly, debouncedName, allPlayers, mode, player]);
 
   const gameById = useMemo(() => new Map(games.map((g) => [g.id, g])), [games]);
 
@@ -396,6 +499,34 @@ export function PlayerFormModal({
               />
               {submitted && validation.errors.name && (
                 <p className="mt-1.5 text-xs font-medium text-status-red-fg">{validation.errors.name}</p>
+              )}
+              {similarMatches.matches.length > 0 && (
+                <div
+                  role="status"
+                  className="mt-2 p-3 rounded-xl border border-status-amber-edge bg-status-amber-bg text-status-amber-fg text-xs space-y-1"
+                >
+                  <p className="font-semibold flex items-center gap-1.5">
+                    <AlertTriangle size={14} className="shrink-0" aria-hidden="true" />
+                    <span>
+                      {similarMatches.hasExactMatch
+                        ? 'A player with this exact name already exists:'
+                        : 'Similar name already registered:'}
+                    </span>
+                  </p>
+                  <ul className="space-y-0.5 pl-5">
+                    {similarMatches.matches.slice(0, 3).map((match) => (
+                      <li key={match.id} className="break-words">
+                        {match.name} - {match.department},{' '}
+                        {match.team === 'blue' ? 'Blue' : match.team === 'red' ? 'Red' : 'Unassigned'}
+                      </li>
+                    ))}
+                    {similarMatches.matches.length > 3 && (
+                      <li className="font-medium">
+                        +{similarMatches.matches.length - 3} more
+                      </li>
+                    )}
+                  </ul>
+                </div>
               )}
             </div>
 
@@ -735,17 +866,19 @@ export function PlayerFormModal({
               >
                 {saving
                   ? 'Saving...'
-                  : mode === 'walkin'
-                    ? walkInChoice === 'auto'
-                      ? 'Save & Assign Team'
-                      : walkInChoice === 'blue'
-                        ? 'Save to Blue'
-                        : walkInChoice === 'red'
-                          ? 'Save to Red'
-                          : 'Save Walk-In'
-                    : mode === 'edit'
-                      ? 'Save Changes'
-                      : 'Save Player'}
+                  : similarMatches.hasExactMatch
+                    ? 'Save anyway'
+                    : mode === 'walkin'
+                      ? walkInChoice === 'auto'
+                        ? 'Save & Assign Team'
+                        : walkInChoice === 'blue'
+                          ? 'Save to Blue'
+                          : walkInChoice === 'red'
+                            ? 'Save to Red'
+                            : 'Save Walk-In'
+                      : mode === 'edit'
+                        ? 'Save Changes'
+                        : 'Save Player'}
               </button>
             </>
           )}
