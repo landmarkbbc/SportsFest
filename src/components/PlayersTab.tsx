@@ -9,6 +9,7 @@ import {
   TeamId,
 } from '../types/models';
 import { getEffectiveLevel, getRegularEntries } from '../utils/balance';
+import { ChurchMarker } from './PlayerMarkers';
 import { SportIcon } from './SportIcons';
 import { TeamIndicator } from './TeamBadge';
 
@@ -339,8 +340,9 @@ export function PlayersTab({
               <div>
                 <div className="flex items-start justify-between gap-2 mb-2">
                   <div className="min-w-0">
-                    <h3 className="text-sm font-semibold text-fg truncate">
-                      {player.name}
+                    <h3 className="text-sm font-semibold text-fg flex items-center gap-1.5 min-w-0">
+                      <span className="truncate">{player.name}</span>
+                      <ChurchMarker church={player.church} />
                     </h3>
                     <div className="flex items-center gap-2 mt-1 flex-wrap">
                       <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-nested border border-edge text-fg">

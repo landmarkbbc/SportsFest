@@ -43,6 +43,7 @@ import {
   computeRoundRobinStandings,
   countResettableResults,
   formatPoints,
+  getBracketChampionPlayerId,
   getBracketDocId,
   getEliminationUndoImpact,
   getGamePairingMode,
@@ -53,6 +54,7 @@ import {
 import { hasPairsRosterChanged } from '../utils/pairs';
 import { CreateBracketModal } from './CreateBracketModal';
 import { MakePairsModal } from './MakePairsModal';
+import { ChurchMarker, PlayerNameWithChurch } from './PlayerMarkers';
 
 interface BracketViewProps {
   game: Game;
@@ -131,6 +133,7 @@ function formatBackupTime(timestamp: number): string {
 
 function MatchSlotRow({
   slot,
+  church,
   showLevel,
   isWinner,
   isLoser,
@@ -139,6 +142,7 @@ function MatchSlotRow({
   onPick,
 }: {
   slot: BracketSlotSnapshot | null;
+  church?: string | null;
   showLevel: boolean;
   isWinner: boolean;
   isLoser: boolean;
@@ -185,9 +189,11 @@ function MatchSlotRow({
           }`}
           aria-label={slot.team === 'blue' ? 'Blue team' : 'Red team'}
         />
-        <span className="text-sm font-medium text-fg break-words leading-snug">
-          {slot.name}
-        </span>
+        <PlayerNameWithChurch
+          name={slot.name}
+          church={church}
+          className="text-sm font-medium text-fg break-words leading-snug"
+        />
         {slot.dept && (
           <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-nested border border-edge text-fg-muted shrink-0">
             {slot.dept}
@@ -226,6 +232,8 @@ function MatchCard({
   match,
   matchNumber,
   showLevel,
+  showChurch,
+  playerById,
   allowsDraw,
   canScore,
   canUndo,
@@ -241,6 +249,8 @@ function MatchCard({
   match: BracketMatch;
   matchNumber: number;
   showLevel: boolean;
+  showChurch: boolean;
+  playerById: ReadonlyMap<string, Player>;
   allowsDraw: boolean;
   canScore: boolean;
   canUndo: boolean;
@@ -322,6 +332,7 @@ function MatchCard({
       <div className="space-y-1.5">
         <MatchSlotRow
           slot={firstSlot}
+          church={showChurch && firstSlot ? playerById.get(firstSlot.playerId)?.church : undefined}
           showLevel={showLevel}
           isWinner={match.winner === firstSide}
           isLoser={match.winner !== null && !isDrawWinner && match.winner !== firstSide}
@@ -335,6 +346,7 @@ function MatchCard({
         />
         <MatchSlotRow
           slot={secondSlot}
+          church={showChurch && secondSlot ? playerById.get(secondSlot.playerId)?.church : undefined}
           showLevel={showLevel}
           isWinner={match.winner === secondSide}
           isLoser={match.winner !== null && !isDrawWinner && match.winner !== secondSide}
@@ -524,6 +536,11 @@ export function BracketView({
       suppressNextConfettiRef.current = false;
     }
   }, [bracketSessionKey, bracket?.status, bracket?.championTeam]);
+
+  const playerById = useMemo(
+    () => new Map(players.map((p) => [p.id, p])),
+    [players]
+  );
 
   const summary = useMemo(
     () =>
@@ -859,23 +876,26 @@ export function BracketView({
                       className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-surface border border-edge"
                     >
                       <span className="text-xs font-medium break-words leading-snug min-w-0 flex-1 inline-flex flex-wrap items-center gap-1">
-                        {pair.members.map((m, idx) => (
-                          <span key={m.playerId} className="inline-flex items-center gap-1">
-                            {idx > 0 && <span className="text-fg-muted">&amp;</span>}
-                            <span
-                              className={
-                                m.withdrawn ? 'text-fg-muted line-through' : 'text-fg'
-                              }
-                            >
-                              {m.name}
+                        {pair.members.map((m, idx) => {
+                          const liveMember = playerById.get(m.playerId);
+                          return (
+                            <span key={m.playerId} className="inline-flex items-center gap-1">
+                              {idx > 0 && <span className="text-fg-muted">&amp;</span>}
+                              <PlayerNameWithChurch
+                                name={liveMember?.name ?? m.name}
+                                church={liveMember?.church}
+                                className={
+                                  m.withdrawn ? 'text-fg-muted line-through' : 'text-fg'
+                                }
+                              />
+                              {m.withdrawn && (
+                                <span className="inline-flex items-center px-1 py-0.2 rounded text-[10px] font-medium bg-status-amber-bg border border-status-amber-edge text-status-amber-fg">
+                                  Withdrawn
+                                </span>
+                              )}
                             </span>
-                            {m.withdrawn && (
-                              <span className="inline-flex items-center px-1 py-0.2 rounded text-[10px] font-medium bg-status-amber-bg border border-status-amber-edge text-status-amber-fg">
-                                Withdrawn
-                              </span>
-                            )}
-                          </span>
-                        ))}
+                          );
+                        })}
                       </span>
                       {showLevelChip && (
                         <span
@@ -891,7 +911,19 @@ export function BracketView({
 
                 {teamUnpaired.length > 0 && (
                   <p className="text-[11px] text-fg-muted leading-snug break-words">
-                    No partner: {teamUnpaired.map((u) => u.name).join(', ')}
+                    No partner:{' '}
+                    {teamUnpaired.map((u, idx) => {
+                      const liveUnpaired = playerById.get(u.playerId);
+                      return (
+                        <span key={u.playerId}>
+                          {idx > 0 && ', '}
+                          <PlayerNameWithChurch
+                            name={liveUnpaired?.name ?? u.name}
+                            church={liveUnpaired?.church}
+                          />
+                        </span>
+                      );
+                    })}
                   </p>
                 )}
               </div>
@@ -1701,8 +1733,11 @@ export function BracketView({
           >
             <ArrowLeft size={20} />
           </button>
-          <h2 className="text-[20px] font-semibold text-fg leading-snug truncate">
-            {player.name}
+          <h2 className="text-[20px] font-semibold text-fg leading-snug flex items-center gap-1.5 min-w-0">
+            <span className="truncate">{player.name}</span>
+            {!isPairsGame && (
+              <ChurchMarker church={playerById.get(player.playerId)?.church} />
+            )}
           </h2>
         </div>
 
@@ -1710,7 +1745,10 @@ export function BracketView({
         <div className="bg-surface border border-edge rounded-xl p-4 flex items-center justify-between gap-3">
           <div className="min-w-0 space-y-1">
             <p className="text-base font-semibold text-fg break-words">
-              {player.name}
+              <PlayerNameWithChurch
+                name={player.name}
+                church={!isPairsGame ? playerById.get(player.playerId)?.church : undefined}
+              />
             </p>
             <div className="flex items-center gap-2 flex-wrap">
               <span
@@ -1759,6 +1797,8 @@ export function BracketView({
                     match={match}
                     matchNumber={roundRobinMatchNumberById.get(match.id) ?? 1}
                     showLevel={showLevelChip}
+                    showChurch={!isPairsGame}
+                    playerById={playerById}
                     allowsDraw={allowsDraw}
                     canScore={canScore}
                     canUndo={canUndoMatch(bracket, match)}
@@ -1919,7 +1959,17 @@ export function BracketView({
                 {divisionMeta ? `Champion · ${divisionMeta.label}` : 'Champion'}
               </p>
               <p className="text-[16px] font-semibold text-fg break-words">
-                {bracket.championName}
+                <PlayerNameWithChurch
+                  name={bracket.championName}
+                  church={
+                    !isPairsGame && bracket.format !== 'teammatch'
+                      ? (() => {
+                          const champId = getBracketChampionPlayerId(bracket);
+                          return champId ? playerById.get(champId)?.church : undefined;
+                        })()
+                      : undefined
+                  }
+                />
               </p>
               <div className="flex items-center gap-1.5 mt-0.5">
                 <span
@@ -1973,9 +2023,11 @@ export function BracketView({
                       }`}
                       aria-hidden="true"
                     />
-                    <span className="text-sm font-medium text-fg break-words">
-                      {player.name}
-                    </span>
+                    <PlayerNameWithChurch
+                      name={player.name}
+                      church={!isPairsGame ? playerById.get(player.playerId)?.church : undefined}
+                      className="text-sm font-medium text-fg break-words"
+                    />
                   </div>
                   <span className="text-xs font-semibold text-fg shrink-0">
                     {busy ? 'Saving...' : 'Pick'}
@@ -1992,9 +2044,11 @@ export function BracketView({
                     }`}
                     aria-hidden="true"
                   />
-                  <span className="text-sm font-medium text-fg break-words">
-                    {player.name}
-                  </span>
+                  <PlayerNameWithChurch
+                    name={player.name}
+                    church={!isPairsGame ? playerById.get(player.playerId)?.church : undefined}
+                    className="text-sm font-medium text-fg break-words"
+                  />
                 </div>
               );
             })}
@@ -2023,7 +2077,10 @@ export function BracketView({
                       }`}
                       aria-hidden="true"
                     />
-                    <span>{winner.name}</span>
+                    <PlayerNameWithChurch
+                      name={winner.name}
+                      church={!isPairsGame ? playerById.get(winner.playerId)?.church : undefined}
+                    />
                   </span>
                 ))}
               </div>
@@ -2147,6 +2204,8 @@ export function BracketView({
                           match={match}
                           matchNumber={idx + 1}
                           showLevel={showLevelChip}
+                          showChurch={!isPairsGame}
+                          playerById={playerById}
                           allowsDraw={allowsDraw}
                           canScore={canScore}
                           canUndo={canUndoMatch(bracket, match)}
@@ -2293,15 +2352,19 @@ export function BracketView({
                                     row.player.team === 'blue' ? 'Blue team' : 'Red team'
                                   }
                                 />
-                                <span
+                                <PlayerNameWithChurch
+                                  name={row.player.name}
+                                  church={
+                                    !isPairsGame
+                                      ? playerById.get(row.player.playerId)?.church
+                                      : undefined
+                                  }
                                   className={`break-words ${
                                     isLeader
                                       ? 'font-semibold text-fg'
                                       : 'font-medium text-fg'
                                   }`}
-                                >
-                                  {row.player.name}
-                                </span>
+                                />
                               </span>
                               <ChevronRight
                                 size={16}
@@ -2348,6 +2411,8 @@ export function BracketView({
                         match={match}
                         matchNumber={roundRobinMatchNumberById.get(match.id) ?? 1}
                         showLevel={showLevelChip}
+                        showChurch={!isPairsGame}
+                        playerById={playerById}
                         allowsDraw={allowsDraw}
                         canScore={canScore}
                         canUndo={canUndoMatch(bracket, match)}
@@ -2390,6 +2455,8 @@ export function BracketView({
                   match={match}
                   matchNumber={idx + 1}
                   showLevel={game.usesSkillLevel}
+                  showChurch={false}
+                  playerById={playerById}
                   allowsDraw={false}
                   canScore={canScore}
                   canUndo={canUndoMatch(bracket, match)}

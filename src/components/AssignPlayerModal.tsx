@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Sparkles, X } from 'lucide-react';
 import { Game, Player, SeparationPair, TeamId } from '../types/models';
 import { getSeparationConflictsForTeam, previewSingleTeamHint } from '../utils/balance';
+import { PlayerNameWithChurch } from './PlayerMarkers';
 
 interface AssignPlayerModalProps {
   open: boolean;
@@ -70,7 +71,7 @@ export function AssignPlayerModal({
               id="assign-player-title"
               className="text-[16px] font-semibold text-fg break-words"
             >
-              Assign {player.name}
+              Assign <PlayerNameWithChurch name={player.name} church={player.church} />
             </h2>
             <p className="text-xs text-fg-muted mt-0.5">
               {player.department} · {player.gender === 'M' ? 'Male (M)' : 'Female (F)'}

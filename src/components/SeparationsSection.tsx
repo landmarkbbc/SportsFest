@@ -3,6 +3,7 @@ import { AlertTriangle, ChevronDown, Plus, Trash2, UserX } from 'lucide-react';
 import { Player, SeparationPair } from '../types/models';
 import { createId } from '../services/db';
 import { hasSeparationOddCycle } from '../utils/balance';
+import { ChurchMarker } from './PlayerMarkers';
 
 interface SearchablePlayerSelectProps {
   id: string;
@@ -78,9 +79,15 @@ function SearchablePlayerSelect({
         }}
         className="w-full min-h-[40px] px-2.5 py-1.5 rounded-xl border border-edge bg-surface text-left text-xs flex items-center justify-between gap-1.5 hover:border-edge-hover transition-colors duration-150 disabled:opacity-60"
       >
-        <span className={`truncate ${selected ? 'text-fg font-medium' : 'text-fg-muted'}`}>
-          {selected ? `${selected.name} · ${selected.department}` : 'Select player...'}
-        </span>
+        {selected ? (
+          <span className="flex items-center gap-1.5 min-w-0 flex-1">
+            <span className="truncate text-fg font-medium">{selected.name}</span>
+            <ChurchMarker church={selected.church} />
+            <span className="text-fg-muted shrink-0">· {selected.department}</span>
+          </span>
+        ) : (
+          <span className="truncate text-fg-muted">Select player...</span>
+        )}
         <ChevronDown size={14} className="text-fg-muted shrink-0" />
       </button>
 
@@ -115,7 +122,10 @@ function SearchablePlayerSelect({
                         : 'text-fg hover:bg-nested'
                     }`}
                   >
-                    <span className="truncate">{p.name}</span>
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      <span className="truncate">{p.name}</span>
+                      <ChurchMarker church={p.church} />
+                    </span>
                     <span className="text-[11px] text-fg-muted shrink-0">{p.department}</span>
                   </button>
                 );

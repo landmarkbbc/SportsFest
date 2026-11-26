@@ -4,7 +4,6 @@ import {
   Bracket,
   DEPARTMENTS,
   ELIGIBILITY_LABELS,
-  EntrySlot,
   GAME_SESSION_LABELS,
   GAME_TYPE_LABELS,
   Game,
@@ -25,11 +24,13 @@ import {
 } from '../utils/balance';
 import {
   DIVISION_LEVELS,
+  getBracketChampionPlayerId,
   getBracketDocId,
   getGameParticipantsSummary,
 } from '../utils/bracket';
 import { BracketView } from './BracketView';
 import { MassGameView } from './MassGameView';
+import { ChurchMarker, PlayerNameWithChurch, SlotBadge } from './PlayerMarkers';
 import { SportIcon } from './SportIcons';
 import { BalanceBadge } from './TeamBadge';
 import { ToastAction } from './Toast';
@@ -61,20 +62,6 @@ interface ParticipantRowItem {
   effectiveLevel: SkillLevel;
 }
 
-function SlotBadge({ slot }: { slot: EntrySlot | undefined }) {
-  if (slot !== 'secondary' && slot !== 'tertiary') return null;
-  const label = slot === 'secondary' ? 'Secondary sport' : 'Tertiary sport';
-  return (
-    <span
-      title={label}
-      aria-label={label}
-      className="w-[18px] h-[18px] rounded-full border border-fg-muted text-fg-muted text-[11px] font-semibold inline-flex items-center justify-center leading-none shrink-0"
-    >
-      {slot === 'secondary' ? '2' : '3'}
-    </span>
-  );
-}
-
 function PlayerListRow({
   item,
   showLevel,
@@ -93,9 +80,11 @@ function PlayerListRow({
         className="w-full text-left flex items-start justify-between gap-2 py-2 px-1.5 -mx-1.5 rounded-lg hover:bg-nested transition-colors duration-150"
       >
         <div className="flex items-center flex-wrap gap-x-1.5 gap-y-1 min-w-0 flex-1">
-          <span className="text-sm font-medium text-fg leading-snug break-words">
-            {player.name}
-          </span>
+          <PlayerNameWithChurch
+            name={player.name}
+            church={player.church}
+            className="text-sm font-medium text-fg leading-snug break-words"
+          />
           <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-nested border border-edge text-fg-muted shrink-0">
             {player.department}
           </span>
@@ -143,13 +132,13 @@ function PairListRow({
               onClick={() => livePlayer && onTapMember(livePlayer, entry)}
               className="w-full text-left flex items-center flex-wrap gap-x-1.5 gap-y-1 px-1.5 -mx-1.5 py-0.5 rounded-lg hover:bg-nested transition-colors duration-150 disabled:opacity-75"
             >
-              <span
+              <PlayerNameWithChurch
+                name={livePlayer?.name ?? member.name}
+                church={livePlayer?.church}
                 className={`text-sm font-medium leading-snug break-words ${
                   isWithdrawn ? 'text-fg-muted line-through' : 'text-fg'
                 }`}
-              >
-                {livePlayer?.name ?? member.name}
-              </span>
+              />
               <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-nested border border-edge text-fg-muted shrink-0">
                 {livePlayer?.department ?? member.dept}
               </span>
@@ -508,19 +497,24 @@ export function SportDetailView({
                     <span className="text-xs font-medium text-fg-muted shrink-0">
                       {d.label}
                     </span>
-                    {isComplete && d.bracket ? (
-                      <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-fg min-w-0">
-                        <span
-                          className={`w-2 h-2 rounded-full shrink-0 ${
-                            d.bracket.championTeam === 'blue'
-                              ? 'bg-blue-team'
-                              : 'bg-red-team'
-                          }`}
-                          aria-hidden="true"
-                        />
-                        <span className="truncate">{d.bracket.championName}</span>
-                      </span>
-                    ) : (
+                    {isComplete && d.bracket ? (() => {
+                      const champId = game.type !== 'pairs' ? getBracketChampionPlayerId(d.bracket) : null;
+                      const champChurch = champId ? playerById.get(champId)?.church : undefined;
+                      return (
+                        <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-fg min-w-0">
+                          <span
+                            className={`w-2 h-2 rounded-full shrink-0 ${
+                              d.bracket.championTeam === 'blue'
+                                ? 'bg-blue-team'
+                                : 'bg-red-team'
+                            }`}
+                            aria-hidden="true"
+                          />
+                          <span className="truncate">{d.bracket.championName}</span>
+                          <ChurchMarker church={champChurch} />
+                        </span>
+                      );
+                    })() : (
                       <span className="text-xs text-fg-muted">pending</span>
                     )}
                   </div>
@@ -685,9 +679,11 @@ export function SportDetailView({
                             className="w-full text-left flex items-start justify-between gap-2 py-2 px-1.5 -mx-1.5 rounded-lg hover:bg-nested transition-colors duration-150 disabled:opacity-75"
                           >
                             <div className="flex items-center flex-wrap gap-x-1.5 gap-y-1 min-w-0 flex-1">
-                              <span className="text-sm font-medium text-fg-muted leading-snug break-words">
-                                {livePlayer?.name ?? u.name}
-                              </span>
+                              <PlayerNameWithChurch
+                                name={livePlayer?.name ?? u.name}
+                                church={livePlayer?.church}
+                                className="text-sm font-medium text-fg-muted leading-snug break-words"
+                              />
                               {livePlayer && (
                                 <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-nested border border-edge text-fg-muted shrink-0">
                                   {livePlayer.department}
@@ -748,9 +744,11 @@ export function SportDetailView({
                             className="w-full text-left flex items-start justify-between gap-2 py-2 px-1.5 -mx-1.5 rounded-lg hover:bg-nested transition-colors duration-150 disabled:opacity-75"
                           >
                             <div className="flex items-center flex-wrap gap-x-1.5 gap-y-1 min-w-0 flex-1">
-                              <span className="text-sm font-medium text-fg-muted leading-snug break-words">
-                                {livePlayer?.name ?? u.name}
-                              </span>
+                              <PlayerNameWithChurch
+                                name={livePlayer?.name ?? u.name}
+                                church={livePlayer?.church}
+                                className="text-sm font-medium text-fg-muted leading-snug break-words"
+                              />
                               {livePlayer && (
                                 <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-nested border border-edge text-fg-muted shrink-0">
                                   {livePlayer.department}
@@ -845,7 +843,11 @@ export function SportDetailView({
                   id="sport-player-action-title"
                   className="text-[16px] font-semibold text-fg break-words"
                 >
-                  {actionTarget.player.name} · {actionTarget.player.department}
+                  <PlayerNameWithChurch
+                    name={actionTarget.player.name}
+                    church={actionTarget.player.church}
+                  />{' '}
+                  · {actionTarget.player.department}
                 </h2>
               </div>
               <button

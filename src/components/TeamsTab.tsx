@@ -28,6 +28,7 @@ import {
   getDisplayGameBalanceStatus,
   getRegularEntries,
 } from '../utils/balance';
+import { PlayerNameWithChurch } from './PlayerMarkers';
 import { SportIcon } from './SportIcons';
 import { BalanceBadge } from './TeamBadge';
 
@@ -328,7 +329,7 @@ export function TeamsTab({
                               onClick={() => onSelectPlayer(player)}
                               className="text-left text-sm leading-[1.3] text-fg hover:underline break-words py-[2px] flex-1"
                             >
-                              {player.name}
+                              <PlayerNameWithChurch name={player.name} church={player.church} />
                             </button>
                           </li>
                         ))}
@@ -384,7 +385,7 @@ export function TeamsTab({
                                   onClick={() => onSelectPlayer(player)}
                                   className="text-left text-sm leading-[1.3] text-fg hover:underline break-words py-[2px] flex-1"
                                 >
-                                  {player.name}
+                                  <PlayerNameWithChurch name={player.name} church={player.church} />
                                 </button>
                               </li>
                             ))}

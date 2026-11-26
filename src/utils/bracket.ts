@@ -510,6 +510,26 @@ export function getRoundRobinTiedLeaders(bracket: Bracket): BracketSlotSnapshot[
   return tied.length > 1 ? tied : [];
 }
 
+export function getBracketChampionPlayerId(bracket: Bracket): string | null {
+  if (bracket.status !== 'complete' || !bracket.championName || bracket.format === 'teammatch') {
+    return null;
+  }
+  if (bracket.format === 'elimination') {
+    let topRound = -1;
+    let topSlot: BracketSlotSnapshot | null = null;
+    for (const m of bracket.matches) {
+      if (m.round >= topRound && (m.winner === 'a' || m.winner === 'b')) {
+        topRound = m.round;
+        topSlot = m.winner === 'a' ? m.a : m.b;
+      }
+    }
+    return topSlot?.playerId ?? null;
+  }
+  const standings = computeRoundRobinStandings(bracket);
+  const exact = standings.find((s) => s.player.name === bracket.championName);
+  return exact?.player.playerId ?? standings[0]?.player.playerId ?? null;
+}
+
 export function applyMatchDecision(
   bracket: Bracket,
   matchId: string,

@@ -23,6 +23,7 @@ import {
   isGenderEligibleForGame,
   previewMovePlayerGameBalances,
 } from '../utils/balance';
+import { PlayerNameWithChurch } from './PlayerMarkers';
 import { SportIcon } from './SportIcons';
 import { BalanceBadge, ConfirmDialog, TeamIndicator } from './TeamBadge';
 
@@ -483,7 +484,9 @@ export function PlayerFormModal({
           <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
             <div>
               <p className="text-xs text-fg-muted mb-1">Full Name</p>
-              <p className="text-[20px] font-semibold text-fg">{player.name}</p>
+              <p className="text-[20px] font-semibold text-fg">
+                <PlayerNameWithChurch name={player.name} church={player.church} />
+              </p>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
