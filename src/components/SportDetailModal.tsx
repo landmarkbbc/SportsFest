@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Trophy } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Trophy, X } from 'lucide-react';
 import {
   Bracket,
   DEPARTMENTS,
   ELIGIBILITY_LABELS,
+  EntrySlot,
   GAME_SESSION_LABELS,
   GAME_TYPE_LABELS,
   Game,
@@ -15,6 +16,7 @@ import {
   SKILL_LEVEL_LABELS,
   SkillLevel,
 } from '../types/models';
+import { removePlayerGameEntry, restorePlayerGameEntry } from '../services/db';
 import {
   computeGameStats,
   getDisplayGameBalanceStatus,
@@ -28,6 +30,7 @@ import {
 import { BracketView } from './BracketView';
 import { SportIcon } from './SportIcons';
 import { BalanceBadge } from './TeamBadge';
+import { ToastAction } from './Toast';
 
 interface SportDetailViewProps {
   game: Game;
@@ -41,7 +44,12 @@ interface SportDetailViewProps {
   navKey?: number;
   backLabel?: string;
   onBack: () => void;
-  onShowToast: (type: 'success' | 'error', text: string) => void;
+  onOpenPlayerDetails: (player: Player) => void;
+  onShowToast: (
+    type: 'success' | 'error',
+    text: string,
+    options?: { durationMs?: number; warningText?: string; action?: ToastAction }
+  ) => void;
 }
 
 interface ParticipantRowItem {
@@ -50,48 +58,99 @@ interface ParticipantRowItem {
   effectiveLevel: SkillLevel;
 }
 
+function SlotBadge({ slot }: { slot: EntrySlot | undefined }) {
+  if (slot !== 'secondary' && slot !== 'tertiary') return null;
+  const label = slot === 'secondary' ? 'Secondary sport' : 'Tertiary sport';
+  return (
+    <span
+      title={label}
+      aria-label={label}
+      className="w-[18px] h-[18px] rounded-full border border-fg-muted text-fg-muted text-[11px] font-semibold inline-flex items-center justify-center leading-none shrink-0"
+    >
+      {slot === 'secondary' ? '2' : '3'}
+    </span>
+  );
+}
+
 function PlayerListRow({
   item,
   showLevel,
+  onTap,
 }: {
   item: ParticipantRowItem;
   showLevel: boolean;
+  onTap: (player: Player, entry: PlayerEntry) => void;
 }) {
   const { player, entry, effectiveLevel } = item;
   return (
-    <li className="flex items-start justify-between gap-2 py-2 border-b border-edge last:border-b-0">
-      <div className="flex items-center flex-wrap gap-x-1.5 gap-y-1 min-w-0 flex-1">
-        <span className="text-sm font-medium text-fg leading-snug break-words">
-          {player.name}
-        </span>
-        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-nested border border-edge text-fg-muted shrink-0">
-          {player.department}
-        </span>
-      </div>
-      {showLevel && (
-        <span
-          title={SKILL_LEVEL_LABELS[effectiveLevel]}
-          className="px-1.5 py-0.5 rounded-md bg-nested border border-edge text-xs font-medium text-fg tabular-nums shrink-0"
-        >
-          L{effectiveLevel}
-          {entry.overrideLevel ? '*' : ''}
-        </span>
-      )}
+    <li className="border-b border-edge last:border-b-0">
+      <button
+        type="button"
+        onClick={() => onTap(player, entry)}
+        className="w-full text-left flex items-start justify-between gap-2 py-2 px-1.5 -mx-1.5 rounded-lg hover:bg-nested transition-colors duration-150"
+      >
+        <div className="flex items-center flex-wrap gap-x-1.5 gap-y-1 min-w-0 flex-1">
+          <span className="text-sm font-medium text-fg leading-snug break-words">
+            {player.name}
+          </span>
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-nested border border-edge text-fg-muted shrink-0">
+            {player.department}
+          </span>
+          <SlotBadge slot={entry.slot} />
+        </div>
+        {showLevel && (
+          <span
+            title={SKILL_LEVEL_LABELS[effectiveLevel]}
+            className="px-1.5 py-0.5 rounded-md bg-nested border border-edge text-xs font-medium text-fg tabular-nums shrink-0"
+          >
+            L{effectiveLevel}
+            {entry.overrideLevel ? '*' : ''}
+          </span>
+        )}
+      </button>
     </li>
   );
 }
 
-function PairListRow({ pair }: { pair: GamePair }) {
+function PairListRow({
+  pair,
+  gameId,
+  playerById,
+  onTapMember,
+}: {
+  pair: GamePair;
+  gameId: string;
+  playerById: ReadonlyMap<string, Player>;
+  onTapMember: (player: Player, entry: PlayerEntry | undefined) => void;
+}) {
   return (
     <li className="flex items-start justify-between gap-2 py-2 border-b border-edge last:border-b-0">
-      <div className="min-w-0 flex-1">
-        <span className="text-sm font-medium text-fg leading-snug break-words">
-          {pair.members[0].name} &amp; {pair.members[1].name}
-        </span>
+      <div className="min-w-0 flex-1 space-y-1">
+        {pair.members.map((member) => {
+          const livePlayer = playerById.get(member.playerId);
+          const entry = livePlayer?.entries.find((e) => e.gameId === gameId);
+          return (
+            <button
+              key={member.playerId}
+              type="button"
+              disabled={!livePlayer}
+              onClick={() => livePlayer && onTapMember(livePlayer, entry)}
+              className="w-full text-left flex items-center flex-wrap gap-x-1.5 gap-y-1 px-1.5 -mx-1.5 py-0.5 rounded-lg hover:bg-nested transition-colors duration-150 disabled:opacity-75"
+            >
+              <span className="text-sm font-medium text-fg leading-snug break-words">
+                {livePlayer?.name ?? member.name}
+              </span>
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-nested border border-edge text-fg-muted shrink-0">
+                {livePlayer?.department ?? member.dept}
+              </span>
+              <SlotBadge slot={entry?.slot} />
+            </button>
+          );
+        })}
       </div>
       <span
         title={`Combined level ${pair.combined}`}
-        className="px-1.5 py-0.5 rounded-md bg-nested border border-edge text-xs font-medium text-fg tabular-nums shrink-0"
+        className="px-1.5 py-0.5 rounded-md bg-nested border border-edge text-xs font-medium text-fg tabular-nums shrink-0 mt-0.5"
       >
         L{pair.combined}
       </span>
@@ -111,6 +170,7 @@ export function SportDetailView({
   navKey,
   backLabel,
   onBack,
+  onOpenPlayerDetails,
   onShowToast,
 }: SportDetailViewProps) {
   const hasExistingBracket = useMemo(() => {
@@ -128,13 +188,30 @@ export function SportDetailView({
   const [activeDivision, setActiveDivision] = useState<SkillLevel>(
     () => initialDivision ?? 1
   );
+  const [actionTarget, setActionTarget] = useState<{
+    player: Player;
+    entry: PlayerEntry;
+  } | null>(null);
+  const [confirmRemoveTarget, setConfirmRemoveTarget] = useState<{
+    player: Player;
+    entry: PlayerEntry;
+    inBracket: boolean;
+  } | null>(null);
+  const [removing, setRemoving] = useState(false);
 
   useEffect(() => {
     setSubTab(initialTab ?? (hasExistingBracket ? 'matches' : 'players'));
     setActiveDivision(initialDivision ?? 1);
+    setActionTarget(null);
+    setConfirmRemoveTarget(null);
     // Reset default tab only when switching game or navigating from another screen
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game.id, navKey]);
+
+  const playerById = useMemo(
+    () => new Map(players.map((p) => [p.id, p])),
+    [players]
+  );
 
   const stats = computeGameStats(players, game.id, undefined, game);
   const displayStatus = getDisplayGameBalanceStatus(stats);
@@ -213,6 +290,125 @@ export function SportDetailView({
       gamePairs ? redGroup.filter((item) => !pairedPlayerIds.has(item.player.id)) : [],
     [gamePairs, redGroup, pairedPlayerIds]
   );
+
+  function isPlayerInCurrentBracketOrPairs(player: Player): boolean {
+    const playerPairIds = new Set<string>();
+    if (gamePairs) {
+      for (const pair of gamePairs.pairs) {
+        if (
+          pair.members[0].playerId === player.id ||
+          pair.members[1].playerId === player.id
+        ) {
+          playerPairIds.add(pair.id);
+        }
+      }
+      if (playerPairIds.size > 0) return true;
+      if (gamePairs.unpaired.some((u) => u.playerId === player.id)) return true;
+    }
+
+    const bracketsToCheck: Bracket[] = [];
+    if (game.hasDivisions) {
+      for (const d of DIVISION_LEVELS) {
+        const b = bracketsByGameId.get(getBracketDocId(game.id, d.level));
+        if (b) bracketsToCheck.push(b);
+      }
+    } else {
+      const b = bracketsByGameId.get(game.id);
+      if (b) bracketsToCheck.push(b);
+    }
+
+    for (const bracket of bracketsToCheck) {
+      for (const match of bracket.matches) {
+        if (match.a?.playerId === player.id || match.b?.playerId === player.id) {
+          return true;
+        }
+        if (
+          (game.type === 'team' || bracket.format === 'teammatch') &&
+          player.team !== null
+        ) {
+          const teamSlotId = player.team === 'blue' ? 'team_blue' : 'team_red';
+          if (match.a?.playerId === teamSlotId || match.b?.playerId === teamSlotId) {
+            return true;
+          }
+        }
+        if (
+          (match.a?.playerId && playerPairIds.has(match.a.playerId)) ||
+          (match.b?.playerId && playerPairIds.has(match.b.playerId))
+        ) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function handleTapPlayer(player: Player, entry?: PlayerEntry) {
+    if (role === 'viewer') {
+      onOpenPlayerDetails(player);
+      return;
+    }
+    const targetEntry = entry ?? player.entries.find((e) => e.gameId === game.id);
+    if (!targetEntry) return;
+    setActionTarget({ player, entry: targetEntry });
+  }
+
+  async function executeRemove(
+    player: Player,
+    entry: PlayerEntry,
+    inBracket: boolean,
+    withUndoToast: boolean
+  ) {
+    setRemoving(true);
+    try {
+      const removed = await removePlayerGameEntry(player.id, game.id);
+      setActionTarget(null);
+      setConfirmRemoveTarget(null);
+      if (!removed) return;
+
+      if (withUndoToast) {
+        onShowToast('success', `Removed from ${game.name}`, {
+          durationMs: 5000,
+          warningText: inBracket
+            ? 'This player is in the current bracket. The bracket is not changed automatically.'
+            : undefined,
+          action: {
+            label: 'Undo',
+            onClick: async () => {
+              try {
+                await restorePlayerGameEntry(player.id, removed);
+              } catch (err) {
+                onShowToast(
+                  'error',
+                  err instanceof Error ? err.message : 'Could not restore sport entry.'
+                );
+              }
+            },
+          },
+        });
+      } else {
+        onShowToast('success', `Removed from ${game.name}`);
+      }
+    } catch (err) {
+      onShowToast(
+        'error',
+        err instanceof Error ? err.message : `Failed to remove from ${game.name}.`
+      );
+    } finally {
+      setRemoving(false);
+    }
+  }
+
+  function handleRequestRemoveFromPopup() {
+    if (!actionTarget) return;
+    const { player, entry } = actionTarget;
+    const inBracket = isPlayerInCurrentBracketOrPairs(player);
+    if (entry.slot === 'secondary' || entry.slot === 'tertiary') {
+      void executeRemove(player, entry, inBracket, true);
+    } else {
+      setActionTarget(null);
+      setConfirmRemoveTarget({ player, entry, inBracket });
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -435,19 +631,34 @@ export function SportDetailView({
                 ) : (
                   <ul>
                     {bluePairs.map((pair) => (
-                      <PairListRow key={pair.id} pair={pair} />
+                      <PairListRow
+                        key={pair.id}
+                        pair={pair}
+                        gameId={game.id}
+                        playerById={playerById}
+                        onTapMember={handleTapPlayer}
+                      />
                     ))}
                     {bluePartnerless.map((item) => (
-                      <li
-                        key={item.player.id}
-                        className="flex items-start justify-between gap-2 py-2 border-b border-edge last:border-b-0"
-                      >
-                        <span className="text-sm font-medium text-fg-muted leading-snug break-words min-w-0 flex-1">
-                          {item.player.name}
-                        </span>
-                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-nested border border-edge text-fg-muted shrink-0">
-                          No partner
-                        </span>
+                      <li key={item.player.id} className="border-b border-edge last:border-b-0">
+                        <button
+                          type="button"
+                          onClick={() => handleTapPlayer(item.player, item.entry)}
+                          className="w-full text-left flex items-start justify-between gap-2 py-2 px-1.5 -mx-1.5 rounded-lg hover:bg-nested transition-colors duration-150"
+                        >
+                          <div className="flex items-center flex-wrap gap-x-1.5 gap-y-1 min-w-0 flex-1">
+                            <span className="text-sm font-medium text-fg-muted leading-snug break-words">
+                              {item.player.name}
+                            </span>
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-nested border border-edge text-fg-muted shrink-0">
+                              {item.player.department}
+                            </span>
+                            <SlotBadge slot={item.entry.slot} />
+                          </div>
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-nested border border-edge text-fg-muted shrink-0">
+                            No partner
+                          </span>
+                        </button>
                       </li>
                     ))}
                   </ul>
@@ -461,6 +672,7 @@ export function SportDetailView({
                       key={item.player.id}
                       item={item}
                       showLevel={game.usesSkillLevel}
+                      onTap={handleTapPlayer}
                     />
                   ))}
                 </ul>
@@ -474,19 +686,34 @@ export function SportDetailView({
                 ) : (
                   <ul>
                     {redPairs.map((pair) => (
-                      <PairListRow key={pair.id} pair={pair} />
+                      <PairListRow
+                        key={pair.id}
+                        pair={pair}
+                        gameId={game.id}
+                        playerById={playerById}
+                        onTapMember={handleTapPlayer}
+                      />
                     ))}
                     {redPartnerless.map((item) => (
-                      <li
-                        key={item.player.id}
-                        className="flex items-start justify-between gap-2 py-2 border-b border-edge last:border-b-0"
-                      >
-                        <span className="text-sm font-medium text-fg-muted leading-snug break-words min-w-0 flex-1">
-                          {item.player.name}
-                        </span>
-                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-nested border border-edge text-fg-muted shrink-0">
-                          No partner
-                        </span>
+                      <li key={item.player.id} className="border-b border-edge last:border-b-0">
+                        <button
+                          type="button"
+                          onClick={() => handleTapPlayer(item.player, item.entry)}
+                          className="w-full text-left flex items-start justify-between gap-2 py-2 px-1.5 -mx-1.5 rounded-lg hover:bg-nested transition-colors duration-150"
+                        >
+                          <div className="flex items-center flex-wrap gap-x-1.5 gap-y-1 min-w-0 flex-1">
+                            <span className="text-sm font-medium text-fg-muted leading-snug break-words">
+                              {item.player.name}
+                            </span>
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-nested border border-edge text-fg-muted shrink-0">
+                              {item.player.department}
+                            </span>
+                            <SlotBadge slot={item.entry.slot} />
+                          </div>
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-nested border border-edge text-fg-muted shrink-0">
+                            No partner
+                          </span>
+                        </button>
                       </li>
                     ))}
                   </ul>
@@ -500,6 +727,7 @@ export function SportDetailView({
                       key={item.player.id}
                       item={item}
                       showLevel={game.usesSkillLevel}
+                      onTap={handleTapPlayer}
                     />
                   ))}
                 </ul>
@@ -525,6 +753,7 @@ export function SportDetailView({
                     key={item.player.id}
                     item={item}
                     showLevel={game.usesSkillLevel}
+                    onTap={handleTapPlayer}
                   />
                 ))}
               </ul>
@@ -550,6 +779,116 @@ export function SportDetailView({
             </div>
           </div>
         </>
+      )}
+
+      {/* Player Action Popup (Admin / Scorer) */}
+      {actionTarget && (
+        <div
+          className="fixed inset-0 z-50 bg-overlay flex items-end sm:items-center justify-center p-0 sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="sport-player-action-title"
+        >
+          <div className="bg-surface w-full sm:max-w-sm rounded-t-2xl sm:rounded-xl border border-edge p-4 sm:p-5 shadow-xl space-y-4 pb-safe">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2
+                  id="sport-player-action-title"
+                  className="text-[16px] font-semibold text-fg break-words"
+                >
+                  {actionTarget.player.name} · {actionTarget.player.department}
+                </h2>
+              </div>
+              <button
+                type="button"
+                disabled={removing}
+                onClick={() => setActionTarget(null)}
+                aria-label="Close"
+                className="min-w-[44px] min-h-[44px] -mr-2 -mt-2 flex items-center justify-center rounded-xl text-fg-muted hover:text-fg hover:bg-nested transition-colors duration-150 disabled:opacity-50"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="space-y-2.5">
+              <button
+                type="button"
+                disabled={removing}
+                onClick={() => {
+                  const p = actionTarget.player;
+                  setActionTarget(null);
+                  onOpenPlayerDetails(p);
+                }}
+                className="w-full min-h-[44px] px-4 py-2.5 rounded-xl bg-primary text-primary-fg text-sm font-medium hover:bg-primary-hover transition-colors duration-150 disabled:opacity-50"
+              >
+                Details
+              </button>
+              <button
+                type="button"
+                disabled={removing}
+                onClick={handleRequestRemoveFromPopup}
+                className="w-full min-h-[44px] px-4 py-2.5 rounded-xl border border-red-edge bg-transparent text-red-light text-sm font-medium hover:bg-red-tint transition-colors duration-150 disabled:opacity-50"
+              >
+                {removing ? 'Removing...' : `Remove from ${game.name}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Main Game Remove Confirmation Dialog */}
+      {confirmRemoveTarget && (
+        <div
+          className="fixed inset-0 z-50 bg-overlay flex items-end sm:items-center justify-center p-0 sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="sport-player-remove-title"
+        >
+          <div className="bg-surface w-full sm:max-w-md rounded-t-2xl sm:rounded-xl border border-edge p-6 shadow-xl space-y-4 pb-safe">
+            <h2
+              id="sport-player-remove-title"
+              className="text-[16px] font-semibold text-fg leading-snug"
+            >
+              {confirmRemoveTarget.player.name}&apos;s main {confirmRemoveTarget.entry.slot} game is{' '}
+              {game.name}. Remove them from it?
+            </h2>
+
+            {confirmRemoveTarget.inBracket && (
+              <div className="flex items-start gap-2 p-2.5 rounded-xl border border-status-amber-edge bg-status-amber-bg text-status-amber-fg text-xs font-medium leading-snug">
+                <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+                <span>
+                  This player is in the current bracket. The bracket is not changed automatically.
+                </span>
+              </div>
+            )}
+
+            <div className="flex items-center gap-3 pt-1">
+              <button
+                type="button"
+                disabled={removing}
+                onClick={() => setConfirmRemoveTarget(null)}
+                className="flex-1 min-h-[44px] px-4 py-2 rounded-xl border border-edge bg-transparent text-sm font-medium text-fg hover:bg-nested transition-colors duration-150 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={removing}
+                onClick={() =>
+                  void executeRemove(
+                    confirmRemoveTarget.player,
+                    confirmRemoveTarget.entry,
+                    confirmRemoveTarget.inBracket,
+                    false
+                  )
+                }
+                className="flex-1 min-h-[44px] px-4 py-2 rounded-xl bg-red-tint border border-red-edge text-red-light text-sm font-medium hover:bg-red-team/25 transition-colors duration-150 disabled:opacity-50"
+              >
+                {removing ? 'Removing...' : 'Remove'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -73,7 +73,7 @@ import { BulkAssignPreviewModal } from './components/BulkAssignPreviewModal';
 import { RebalancePreviewModal } from './components/RebalancePreviewModal';
 import { SportDetailView } from './components/SportDetailModal';
 import { ProgramModal } from './components/ProgramModal';
-import { Toast, ToastMessage } from './components/Toast';
+import { Toast, ToastAction, ToastMessage } from './components/Toast';
 
 const ROLE_STORAGE_KEY = 'sfm_device_role';
 const TAB_STORAGE_KEY = 'sfm_active_tab';
@@ -184,18 +184,29 @@ export default function App() {
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const toastTimerRef = useRef<number | null>(null);
 
-  const showToast = useCallback((type: 'success' | 'error', text: string) => {
-    if (toastTimerRef.current) {
-      window.clearTimeout(toastTimerRef.current);
-    }
-    setToast({ id: Date.now(), type, text });
-    toastTimerRef.current = window.setTimeout(
-      () => {
+  const showToast = useCallback(
+    (
+      type: 'success' | 'error',
+      text: string,
+      options?: { durationMs?: number; warningText?: string; action?: ToastAction }
+    ) => {
+      if (toastTimerRef.current) {
+        window.clearTimeout(toastTimerRef.current);
+      }
+      setToast({
+        id: Date.now(),
+        type,
+        text,
+        warningText: options?.warningText,
+        action: options?.action,
+      });
+      const duration = options?.durationMs ?? (type === 'error' ? 4000 : 2500);
+      toastTimerRef.current = window.setTimeout(() => {
         setToast(null);
-      },
-      type === 'error' ? 4000 : 2500
-    );
-  }, []);
+      }, duration);
+    },
+    []
+  );
 
   const handleSelectTab = useCallback((nextTab: AppTab) => {
     setActiveTab(nextTab);
@@ -744,6 +755,11 @@ export default function App() {
                     : 'Back to sports'
               }
               onBack={() => setSportNav(null)}
+              onOpenPlayerDetails={(player) => {
+                setSelectedPlayer(player);
+                setPlayerModalMode('edit');
+                setPlayerModalOpen(true);
+              }}
               onShowToast={showToast}
             />
           ) : (

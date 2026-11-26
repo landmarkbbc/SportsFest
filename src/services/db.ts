@@ -27,6 +27,7 @@ import {
   Game,
   GamePairs,
   Player,
+  PlayerEntry,
   SEED_GAMES,
   TeamId,
   getDefaultGameAllowsDraw,
@@ -624,6 +625,101 @@ export async function deletePlayer(playerId: string): Promise<void> {
     await deleteDoc(doc(db, 'players', playerId));
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `players/${playerId}`);
+  }
+}
+
+export async function removePlayerGameEntry(
+  playerId: string,
+  gameId: string
+): Promise<PlayerEntry | null> {
+  const ref = doc(db, 'players', playerId);
+  try {
+    return await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) {
+        throw new Error('Player not found.');
+      }
+      const data = snap.data() as Player;
+      const currentEntries = Array.isArray(data.entries) ? data.entries : [];
+      const removed = currentEntries.find((e) => e.gameId === gameId) ?? null;
+      if (!removed) return null;
+
+      const remaining = currentEntries
+        .filter((e) => e.gameId !== gameId)
+        .map((e) => ({
+          slot: e.slot,
+          gameId: e.gameId,
+          selfLevel: e.selfLevel,
+          overrideLevel: e.overrideLevel ?? null,
+        }));
+
+      tx.update(ref, {
+        entries: remaining,
+        updatedAt: Date.now(),
+      });
+
+      return {
+        slot: removed.slot,
+        gameId: removed.gameId,
+        selfLevel: removed.selfLevel,
+        overrideLevel: removed.overrideLevel ?? null,
+      };
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'Player not found.') {
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.UPDATE, `players/${playerId}`);
+  }
+}
+
+export async function restorePlayerGameEntry(
+  playerId: string,
+  entry: PlayerEntry
+): Promise<void> {
+  const ref = doc(db, 'players', playerId);
+  try {
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) {
+        throw new Error('Player not found.');
+      }
+      const data = snap.data() as Player;
+      const currentEntries = Array.isArray(data.entries) ? data.entries : [];
+      if (currentEntries.some((e) => e.gameId === entry.gameId)) {
+        return;
+      }
+      if (currentEntries.some((e) => e.slot === entry.slot)) {
+        throw new Error('That slot is now used by another sport.');
+      }
+      const nextEntries = [
+        ...currentEntries.map((e) => ({
+          slot: e.slot,
+          gameId: e.gameId,
+          selfLevel: e.selfLevel,
+          overrideLevel: e.overrideLevel ?? null,
+        })),
+        {
+          slot: entry.slot,
+          gameId: entry.gameId,
+          selfLevel: entry.selfLevel,
+          overrideLevel: entry.overrideLevel ?? null,
+        },
+      ];
+      tx.update(ref, {
+        entries: nextEntries,
+        updatedAt: Date.now(),
+      });
+    });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message === 'Player not found.' ||
+        error.message === 'That slot is now used by another sport.')
+    ) {
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.UPDATE, `players/${playerId}`);
   }
 }
 
