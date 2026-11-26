@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Check, ChevronDown, Church, Edit3, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, Church, Edit3, Plus, Trash2, X } from 'lucide-react';
 import { Player } from '../types/models';
 import { ConfirmDialog } from './TeamBadge';
 
@@ -7,6 +7,7 @@ interface ChurchesSectionProps {
   isAdmin: boolean;
   churches: string[];
   players: Player[];
+  onAddChurch: (name: string) => Promise<string>;
   onRenameChurch: (oldName: string, newName: string) => Promise<void>;
   onDeleteChurch: (name: string) => Promise<void>;
 }
@@ -15,6 +16,7 @@ export function ChurchesSection({
   isAdmin,
   churches,
   players,
+  onAddChurch,
   onRenameChurch,
   onDeleteChurch,
 }: ChurchesSectionProps) {
@@ -22,6 +24,9 @@ export function ChurchesSection({
   const [editingName, setEditingName] = useState<string | null>(null);
   const [draftName, setDraftName] = useState('');
   const [renameError, setRenameError] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [addError, setAddError] = useState('');
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
@@ -74,6 +79,37 @@ export function ChurchesSection({
       cancelRename();
     } catch (err) {
       setRenameError(err instanceof Error ? err.message : 'Failed to rename church.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleAdd() {
+    const clean = newName.trim();
+    if (!clean) {
+      setAddError('Church name is required.');
+      return;
+    }
+    if (clean.length > 40) {
+      setAddError('Max 40 characters.');
+      return;
+    }
+    if (clean.toLowerCase() === 'main church') {
+      setAddError('Name cannot be "Main church".');
+      return;
+    }
+    if (churches.some((c) => c.toLowerCase() === clean.toLowerCase())) {
+      setAddError('Church already exists.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await onAddChurch(clean);
+      setAdding(false);
+      setNewName('');
+      setAddError('');
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : 'Failed to add church.');
     } finally {
       setSaving(false);
     }
@@ -230,6 +266,78 @@ export function ChurchesSection({
               );
             })}
           </div>
+
+          {isAdmin && (
+            <div className="pt-2 border-t border-edge">
+              {adding ? (
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={newName}
+                      maxLength={40}
+                      autoFocus
+                      disabled={saving}
+                      onChange={(e) => {
+                        setNewName(e.target.value);
+                        if (addError) setAddError('');
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          void handleAdd();
+                        } else if (e.key === 'Escape') {
+                          setAdding(false);
+                          setNewName('');
+                          setAddError('');
+                        }
+                      }}
+                      placeholder="Enter church name"
+                      aria-label="New church name"
+                      className="flex-1 min-w-0 min-h-[38px] px-3 py-1.5 rounded-xl border border-edge bg-nested text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:ring-2 focus:ring-fg"
+                    />
+                    <button
+                      type="button"
+                      disabled={saving}
+                      onClick={() => void handleAdd()}
+                      className="min-h-[38px] px-3 py-1.5 rounded-xl bg-primary text-primary-fg text-xs font-medium hover:bg-primary-hover shrink-0 disabled:opacity-50"
+                    >
+                      {saving ? 'Adding...' : 'Add'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={saving}
+                      onClick={() => {
+                        setAdding(false);
+                        setNewName('');
+                        setAddError('');
+                      }}
+                      className="min-h-[38px] px-3 py-1.5 rounded-xl border border-edge bg-transparent text-xs font-medium text-fg-muted hover:text-fg hover:bg-nested shrink-0"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                  {addError && (
+                    <p className="text-xs font-medium text-status-amber-fg">{addError}</p>
+                  )}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => {
+                    setAdding(true);
+                    setNewName('');
+                    setAddError('');
+                  }}
+                  className="w-full min-h-[40px] px-3 py-2 rounded-xl border border-edge bg-transparent text-xs font-medium text-fg hover:bg-nested inline-flex items-center justify-center gap-1.5 transition-colors duration-150 disabled:opacity-50"
+                >
+                  <Plus size={15} />
+                  <span>Add church</span>
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
 

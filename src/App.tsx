@@ -983,6 +983,7 @@ export default function App() {
               onUpdateMassGameItemPoints={handleUpdateMassGameItemPoints}
               onDeleteGame={handleDeleteGame}
               onSaveSeparations={handleSaveSeparations}
+              onAddChurch={handleAddChurch}
               onRenameChurch={handleRenameChurch}
               onDeleteChurch={handleDeleteChurch}
               onResetAllTeams={handleResetAllTeams}

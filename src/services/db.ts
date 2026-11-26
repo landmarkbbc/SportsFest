@@ -1864,3 +1864,76 @@ export async function resetMassGameResults(
     handleFirestoreError(error, OperationType.UPDATE, `massgames/${gameId}`);
   }
 }
+
+export async function addMassGameItem(gameId: string): Promise<MassGameItem> {
+  const ref = doc(db, 'massgames', gameId);
+  try {
+    return await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      const current = snap.exists()
+        ? normalizeMassGameDoc(snap.data() as Partial<MassGameDoc>)
+        : { items: [] };
+      if (current.items.length >= 20) {
+        throw new Error('Maximum 20 games');
+      }
+      const usedNums = new Set<number>();
+      for (const item of current.items) {
+        const m = /^game\s+(\d+)$/i.exec(item.name.trim());
+        if (m) usedNums.add(Number(m[1]));
+      }
+      let n = current.items.length + 1;
+      while (usedNums.has(n)) n += 1;
+      const newItem: MassGameItem = {
+        id: createId('mg'),
+        name: `Game ${n}`,
+        winner: null,
+        points: 1,
+      };
+      tx.set(ref, {
+        items: [...current.items, newItem],
+        updatedAt: Date.now(),
+      });
+      return newItem;
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'Maximum 20 games') throw error;
+    if (isTxContentionError(error)) throw new StaleBracketError();
+    handleFirestoreError(error, OperationType.UPDATE, `massgames/${gameId}`);
+  }
+}
+
+export async function deleteMassGameItem(
+  gameId: string,
+  itemId: string
+): Promise<void> {
+  const ref = doc(db, 'massgames', gameId);
+  try {
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) {
+        throw new StaleBracketError();
+      }
+      const current = normalizeMassGameDoc(snap.data() as Partial<MassGameDoc>);
+      if (current.items.length <= 1) {
+        throw new Error('A mass game needs at least 1 game');
+      }
+      const nextItems = current.items.filter((i) => i.id !== itemId);
+      if (nextItems.length === current.items.length) {
+        throw new StaleBracketError();
+      }
+      tx.update(ref, {
+        items: nextItems,
+        updatedAt: Date.now(),
+      });
+    });
+  } catch (error) {
+    if (
+      error instanceof StaleBracketError ||
+      (error instanceof Error && error.message === 'A mass game needs at least 1 game')
+    ) {
+      throw error;
+    }
+    if (isTxContentionError(error)) throw new StaleBracketError();
+    handleFirestoreError(error, OperationType.UPDATE, `massgames/${gameId}`);
+  }
+}

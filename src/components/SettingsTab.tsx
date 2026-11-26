@@ -54,6 +54,7 @@ interface SettingsTabProps {
   ) => Promise<void>;
   onDeleteGame: (gameId: string) => Promise<void>;
   onSaveSeparations: (pairs: SeparationPair[]) => Promise<void>;
+  onAddChurch: (name: string) => Promise<string>;
   onRenameChurch: (oldName: string, newName: string) => Promise<void>;
   onDeleteChurch: (name: string) => Promise<void>;
   onResetAllTeams: () => Promise<void>;
@@ -249,6 +250,7 @@ export function SettingsTab({
   onUpdateMassGameItemPoints,
   onDeleteGame,
   onSaveSeparations,
+  onAddChurch,
   onRenameChurch,
   onDeleteChurch,
   onResetAllTeams,
@@ -699,6 +701,7 @@ export function SettingsTab({
         isAdmin={isAdmin}
         churches={churches}
         players={players}
+        onAddChurch={onAddChurch}
         onRenameChurch={onRenameChurch}
         onDeleteChurch={onDeleteChurch}
       />

@@ -1,7 +1,9 @@
-import { useState } from 'react';
-import { ArrowLeft, Check, Pencil, RotateCcw, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { ArrowLeft, Check, Pencil, Plus, RotateCcw, Trash2, X } from 'lucide-react';
 import { Game, MassGameDoc, MassGameItem, Role, TeamId } from '../types/models';
 import {
+  addMassGameItem,
+  deleteMassGameItem,
   renameMassGameItem,
   resetMassGameResults,
   toggleMassGameWinner,
@@ -48,6 +50,21 @@ export function MassGameView({
   const [savingName, setSavingName] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<MassGameItem | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [pendingScrollId, setPendingScrollId] = useState<string | null>(null);
+  const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+
+  useEffect(() => {
+    if (!pendingScrollId) return;
+    if (!items.some((i) => i.id === pendingScrollId)) return;
+    const el = cardRefs.current.get(pendingScrollId);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    setPendingScrollId(null);
+  }, [items, pendingScrollId]);
 
   let blueWins = 0;
   let redWins = 0;
@@ -120,6 +137,45 @@ export function MassGameView({
       onShowToast('error', getErrorText(err, 'Failed to clear results.'));
     } finally {
       setResetting(false);
+    }
+  }
+
+  function handleRequestDelete(item: MassGameItem) {
+    if (!canEdit) return;
+    if (items.length <= 1) {
+      onShowToast('error', 'A mass game needs at least 1 game');
+      return;
+    }
+    setDeleteTarget(item);
+  }
+
+  async function handleConfirmDelete() {
+    if (!canEdit || !deleteTarget || deleting) return;
+    setDeleting(true);
+    try {
+      await deleteMassGameItem(game.id, deleteTarget.id);
+      if (editingItemId === deleteTarget.id) cancelEditingName();
+      setDeleteTarget(null);
+    } catch (err) {
+      onShowToast('error', getErrorText(err, 'Failed to delete game.'));
+      setDeleteTarget(null);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  async function handleAddGame() {
+    if (!canEdit || adding || items.length >= 20) return;
+    setAdding(true);
+    try {
+      const created = await addMassGameItem(game.id);
+      setEditingItemId(created.id);
+      setNameDraft(created.name);
+      setPendingScrollId(created.id);
+    } catch (err) {
+      onShowToast('error', getErrorText(err, 'Failed to add game.'));
+    } finally {
+      setAdding(false);
     }
   }
 
@@ -222,6 +278,10 @@ export function MassGameView({
             return (
               <div
                 key={item.id}
+                ref={(el) => {
+                  if (el) cardRefs.current.set(item.id, el);
+                  else cardRefs.current.delete(item.id);
+                }}
                 className="bg-surface border border-edge rounded-xl p-4 space-y-3"
               >
                 <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -300,6 +360,16 @@ export function MassGameView({
                     <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-nested border border-edge text-xs font-medium text-fg-muted tabular-nums">
                       {ptsText}
                     </span>
+                    {canEdit && (
+                      <button
+                        type="button"
+                        onClick={() => handleRequestDelete(item)}
+                        aria-label={`Delete ${item.name}`}
+                        className="min-w-[44px] min-h-[44px] -my-2 -mr-2 rounded-xl text-fg-muted hover:text-status-red-fg hover:bg-nested inline-flex items-center justify-center transition-colors duration-150"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -397,6 +467,23 @@ export function MassGameView({
         </div>
       )}
 
+      {canEdit && (
+        <div className="space-y-1.5">
+          <button
+            type="button"
+            disabled={adding || items.length >= 20}
+            onClick={() => void handleAddGame()}
+            className="w-full min-h-[44px] px-4 py-2.5 rounded-xl border border-edge bg-transparent text-sm font-medium text-fg hover:bg-nested inline-flex items-center justify-center gap-1.5 transition-colors duration-150 disabled:opacity-45"
+          >
+            <Plus size={16} />
+            <span>{adding ? 'Adding game...' : 'Add game'}</span>
+          </button>
+          {items.length >= 20 && (
+            <p className="text-xs text-fg-muted text-center">Maximum 20 games</p>
+          )}
+        </div>
+      )}
+
       <ConfirmDialog
         open={resetOpen}
         title={`Clear all ${decidedCount} ${decidedCount === 1 ? 'result' : 'results'}?`}
@@ -405,6 +492,19 @@ export function MassGameView({
         onConfirm={() => void handleConfirmReset()}
         onCancel={() => setResetOpen(false)}
         busy={resetting}
+      />
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title={`Delete ${deleteTarget?.name ?? 'game'}?`}
+        description={
+          deleteTarget?.winner ? 'Its result and points will be removed.' : ''
+        }
+        confirmLabel="Delete"
+        confirmVariant="danger"
+        onConfirm={() => void handleConfirmDelete()}
+        onCancel={() => setDeleteTarget(null)}
+        busy={deleting}
       />
     </div>
   );
