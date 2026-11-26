@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Bracket, Game, SkillLevel, TeamId } from '../types/models';
-import { subscribeBrackets } from '../services/db';
+import { Bracket, Game, MassGameDoc, SkillLevel, TeamId } from '../types/models';
+import { subscribeBrackets, subscribeMassGames } from '../services/db';
 import { DIVISION_LEVELS, getBracketDocId } from '../utils/bracket';
 
 export interface ScoreboardChampionRow {
@@ -21,7 +21,8 @@ export interface ScoreboardSportRow {
   title: string;
   bluePoints: number;
   redPoints: number;
-  status: 'no_bracket' | 'in_progress' | 'complete';
+  status: 'no_bracket' | 'no_results' | 'in_progress' | 'complete';
+  massWins?: { blue: number; red: number };
 }
 
 export interface ScoreboardData {
@@ -103,7 +104,8 @@ function computeBracketBreakdown(
 
 export function computeScoreboard(
   games: Game[],
-  bracketsByGameId: Map<string, Bracket>
+  bracketsByGameId: Map<string, Bracket>,
+  massGamesByGameId: Map<string, MassGameDoc> = new Map()
 ): ScoreboardData {
   let blueTotal = 0;
   let redTotal = 0;
@@ -111,6 +113,44 @@ export function computeScoreboard(
   const sportRows: ScoreboardSportRow[] = [];
 
   for (const game of games) {
+    if (game.type === 'mass') {
+      const items = massGamesByGameId.get(game.id)?.items ?? [];
+      let bluePoints = 0;
+      let redPoints = 0;
+      let blueWins = 0;
+      let redWins = 0;
+      for (const item of items) {
+        if (item.winner === 'blue') {
+          blueWins += 1;
+          bluePoints += item.points;
+        } else if (item.winner === 'red') {
+          redWins += 1;
+          redPoints += item.points;
+        }
+      }
+      const decided = blueWins + redWins;
+      const status: ScoreboardSportRow['status'] =
+        items.length === 0 || decided === 0
+          ? 'no_results'
+          : decided === items.length
+            ? 'complete'
+            : 'in_progress';
+
+      blueTotal += bluePoints;
+      redTotal += redPoints;
+      sportRows.push({
+        id: game.id,
+        game,
+        division: null,
+        title: game.name,
+        bluePoints,
+        redPoints,
+        status,
+        massWins: { blue: blueWins, red: redWins },
+      });
+      continue;
+    }
+
     if (game.hasDivisions) {
       for (const div of DIVISION_LEVELS) {
         const docId = getBracketDocId(game.id, div.level);
@@ -183,18 +223,24 @@ export function useBracketsAndScoreboard(
   onSyncError: (message: string) => void
 ): {
   bracketsByGameId: Map<string, Bracket>;
+  massGamesByGameId: Map<string, MassGameDoc>;
   bracketsLoaded: boolean;
+  massGamesLoaded: boolean;
   scoreboard: ScoreboardData;
 } {
   const [bracketsByGameId, setBracketsByGameId] = useState<Map<string, Bracket>>(
     () => new Map()
   );
+  const [massGamesByGameId, setMassGamesByGameId] = useState<Map<string, MassGameDoc>>(
+    () => new Map()
+  );
   const [bracketsLoaded, setBracketsLoaded] = useState(false);
+  const [massGamesLoaded, setMassGamesLoaded] = useState(false);
 
   useEffect(() => {
     if (!authReady) return;
 
-    const unsub = subscribeBrackets(
+    const unsubBrackets = subscribeBrackets(
       (data) => {
         setBracketsByGameId(data);
         setBracketsLoaded(true);
@@ -205,19 +251,33 @@ export function useBracketsAndScoreboard(
       }
     );
 
+    const unsubMassGames = subscribeMassGames(
+      (data) => {
+        setMassGamesByGameId(data);
+        setMassGamesLoaded(true);
+      },
+      (err) => {
+        setMassGamesLoaded(true);
+        onSyncError(`Mass games sync error: ${err.message}`);
+      }
+    );
+
     return () => {
-      unsub();
+      unsubBrackets();
+      unsubMassGames();
     };
   }, [authReady, onSyncError]);
 
   const scoreboard = useMemo(
-    () => computeScoreboard(games, bracketsByGameId),
-    [games, bracketsByGameId]
+    () => computeScoreboard(games, bracketsByGameId, massGamesByGameId),
+    [games, bracketsByGameId, massGamesByGameId]
   );
 
   return {
     bracketsByGameId,
+    massGamesByGameId,
     bracketsLoaded,
+    massGamesLoaded,
     scoreboard,
   };
 }

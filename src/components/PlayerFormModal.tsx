@@ -12,12 +12,14 @@ import {
   PlayerEntry,
   Role,
   SKILL_LEVEL_LABELS,
+  SeparationPair,
   SkillLevel,
   TeamId,
 } from '../types/models';
 import {
   MoveGameBalanceDiff,
   getEffectiveLevel,
+  getSeparationConflictsForTeam,
   isGenderEligibleForGame,
   previewMovePlayerGameBalances,
 } from '../utils/balance';
@@ -42,16 +44,20 @@ interface PlayerFormModalProps {
   role: Role;
   games: Game[];
   lockedGameIds: Set<string>;
+  separations: SeparationPair[];
+  churches: string[];
   onClose: () => void;
   onSavePlayer: (payload: {
     name: string;
     department: Department;
     gender: Gender;
+    church: string;
     entries: PlayerEntry[];
     isWalkIn: boolean;
     walkInChoice: WalkInTeamChoice;
     editTeam?: TeamId | null;
   }) => Promise<void>;
+  onAddChurch: (name: string) => Promise<string>;
   onDeletePlayer?: (playerId: string) => Promise<void>;
 }
 
@@ -167,8 +173,11 @@ export function PlayerFormModal({
   role,
   games,
   lockedGameIds,
+  separations,
+  churches,
   onClose,
   onSavePlayer,
+  onAddChurch,
   onDeletePlayer,
 }: PlayerFormModalProps) {
   const isAdmin = role === 'admin';
@@ -177,6 +186,11 @@ export function PlayerFormModal({
   const [name, setName] = useState('');
   const [department, setDepartment] = useState<Department>('YP');
   const [gender, setGender] = useState<Gender>('M');
+  const [church, setChurch] = useState('');
+  const [addingChurch, setAddingChurch] = useState(false);
+  const [newChurchName, setNewChurchName] = useState('');
+  const [churchError, setChurchError] = useState('');
+  const [savingChurch, setSavingChurch] = useState(false);
   const [drafts, setDrafts] = useState<DraftBySlot>(() => buildInitialDrafts(null));
   const [walkInChoice, setWalkInChoice] = useState<WalkInTeamChoice>('auto');
   const [editTeam, setEditTeam] = useState<TeamId | null>(null);
@@ -191,6 +205,7 @@ export function PlayerFormModal({
     entries: PlayerEntry[];
     diffs: MoveGameBalanceDiff[];
     lockedGameNames: string[];
+    separationPartnerNames: string[];
   } | null>(null);
 
   // Validation errors
@@ -204,6 +219,10 @@ export function PlayerFormModal({
     setDebouncedName(initialName);
     setDepartment(player?.department ?? 'YP');
     setGender(player?.gender ?? 'M');
+    setChurch((player?.church ?? '').trim());
+    setAddingChurch(false);
+    setNewChurchName('');
+    setChurchError('');
     setDrafts(buildInitialDrafts(player));
     setWalkInChoice('auto');
     setEditTeam(player?.team ?? null);
@@ -278,6 +297,16 @@ export function PlayerFormModal({
     return { errors, hasErrors };
   }, [name, drafts, gender, gameById, initialEntryGameIdBySlot]);
 
+  const churchOptions = useMemo(() => {
+    const list = churches.slice();
+    if (church && !list.some((c) => c.toLowerCase() === church.toLowerCase())) {
+      list.push(church);
+    }
+    return list.sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: 'base' })
+    );
+  }, [churches, church]);
+
   if (!open) return null;
 
   function updateSlot(slot: EntrySlot, patch: Partial<SlotDraft>) {
@@ -302,6 +331,38 @@ export function PlayerFormModal({
     return entries;
   }
 
+  async function handleConfirmAddChurch() {
+    const trimmed = newChurchName.trim();
+    if (!trimmed) {
+      setChurchError('Church name is required.');
+      return;
+    }
+    if (trimmed.length > 40) {
+      setChurchError('Max 40 characters.');
+      return;
+    }
+    if (trimmed.toLowerCase() === 'main church') {
+      setChurchError('Name cannot be "Main church".');
+      return;
+    }
+    if (churchOptions.some((c) => c.toLowerCase() === trimmed.toLowerCase())) {
+      setChurchError('Church already exists.');
+      return;
+    }
+    setSavingChurch(true);
+    try {
+      const added = await onAddChurch(trimmed);
+      setChurch(added);
+      setAddingChurch(false);
+      setNewChurchName('');
+      setChurchError('');
+    } catch (err) {
+      setChurchError(err instanceof Error ? err.message : 'Failed to add church.');
+    } finally {
+      setSavingChurch(false);
+    }
+  }
+
   async function executeSave(entries: PlayerEntry[]) {
     setSaving(true);
     try {
@@ -309,6 +370,7 @@ export function PlayerFormModal({
         name: name.trim(),
         department,
         gender,
+        church: church.trim(),
         entries,
         isWalkIn: mode === 'walkin' ? true : Boolean(player?.isWalkIn),
         walkInChoice: mode === 'walkin' ? walkInChoice : 'unassigned',
@@ -345,12 +407,19 @@ export function PlayerFormModal({
           lockedGameNames.push(gameById.get(entry.gameId)?.name ?? entry.gameId);
         }
       }
+      const separationPartnerNames = getSeparationConflictsForTeam(
+        player.id,
+        editTeam,
+        allPlayers,
+        separations
+      ).map((p) => p.name);
       setMoveConfirmData({
         fromTeam: player.team,
         toTeam: editTeam,
         entries,
         diffs,
         lockedGameNames,
+        separationPartnerNames,
       });
       return;
     }
@@ -417,7 +486,7 @@ export function PlayerFormModal({
               <p className="text-[20px] font-semibold text-fg">{player.name}</p>
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="bg-nested border border-edge rounded-xl p-3">
                 <p className="text-xs text-fg-muted mb-1">Department</p>
                 <p className="text-sm font-semibold text-fg">{player.department}</p>
@@ -429,6 +498,12 @@ export function PlayerFormModal({
                 </p>
               </div>
               <div className="bg-nested border border-edge rounded-xl p-3">
+                <p className="text-xs text-fg-muted mb-1">Church</p>
+                <p className="text-sm font-semibold text-fg truncate">
+                  {player.church?.trim() || 'Main church'}
+                </p>
+              </div>
+              <div className="bg-nested border border-edge rounded-xl p-3">
                 <p className="text-xs text-fg-muted mb-1">Team</p>
                 <TeamIndicator team={player.team} compact />
               </div>
@@ -436,13 +511,17 @@ export function PlayerFormModal({
 
             <div>
               <h3 className="text-[16px] font-semibold text-fg mb-3">Registered Games</h3>
-              {player.entries.length === 0 ? (
+              {(() => {
+                const regularEntries = player.entries.filter(
+                  (e) => gameById.get(e.gameId)?.type !== 'mass'
+                );
+                return regularEntries.length === 0 ? (
                 <div className="p-4 rounded-xl border border-edge bg-nested">
                   <p className="text-sm text-fg-muted">No games yet</p>
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {player.entries.map((entry) => {
+                  {regularEntries.map((entry) => {
                     const game = gameById.get(entry.gameId);
                     const eff = getEffectiveLevel(entry);
                     const slotLabel = ENTRY_SLOTS.find((s) => s.key === entry.slot)?.label ?? entry.slot;
@@ -478,7 +557,8 @@ export function PlayerFormModal({
                     );
                   })}
                 </div>
-              )}
+                );
+              })()}
             </div>
           </div>
         ) : (
@@ -577,6 +657,92 @@ export function PlayerFormModal({
                   })}
                 </div>
               </div>
+            </div>
+
+            {/* Church */}
+            <div>
+              <label htmlFor="player-church" className="block text-sm font-medium text-fg mb-1.5">
+                Church
+              </label>
+              <select
+                id="player-church"
+                value={church}
+                disabled={savingChurch}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === '__add__') {
+                    setAddingChurch(true);
+                    setNewChurchName('');
+                    setChurchError('');
+                  } else {
+                    setChurch(val);
+                    setAddingChurch(false);
+                    setChurchError('');
+                  }
+                }}
+                className="w-full min-h-[44px] px-3 py-2 rounded-xl border border-edge bg-nested text-sm text-fg focus:outline-none focus:ring-2 focus:ring-fg"
+              >
+                <option value="">Main church</option>
+                {churchOptions.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+                <option value="__add__">+ Add a church</option>
+              </select>
+
+              {addingChurch && (
+                <div className="mt-2 p-3 rounded-xl border border-edge bg-nested space-y-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={newChurchName}
+                      maxLength={40}
+                      autoFocus
+                      disabled={savingChurch}
+                      onChange={(e) => {
+                        setNewChurchName(e.target.value);
+                        if (churchError) setChurchError('');
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          void handleConfirmAddChurch();
+                        } else if (e.key === 'Escape') {
+                          setAddingChurch(false);
+                          setChurchError('');
+                        }
+                      }}
+                      placeholder="Enter church name"
+                      aria-label="New church name"
+                      className="flex-1 min-w-0 min-h-[38px] px-3 py-1.5 rounded-xl border border-edge bg-surface text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:ring-2 focus:ring-fg"
+                    />
+                    <button
+                      type="button"
+                      disabled={savingChurch}
+                      onClick={() => void handleConfirmAddChurch()}
+                      className="min-h-[38px] px-3 py-1.5 rounded-xl bg-primary text-primary-fg text-xs font-medium hover:bg-primary-hover shrink-0 disabled:opacity-50"
+                    >
+                      {savingChurch ? 'Adding...' : 'Add'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={savingChurch}
+                      onClick={() => {
+                        setAddingChurch(false);
+                        setNewChurchName('');
+                        setChurchError('');
+                      }}
+                      className="min-h-[38px] px-3 py-1.5 rounded-xl border border-edge bg-transparent text-xs font-medium text-fg-muted hover:text-fg hover:bg-surface shrink-0"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                  {churchError && (
+                    <p className="text-xs font-medium text-status-amber-fg">{churchError}</p>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Edit Player Team Segmented Control (Admin only, directly below Gender) */}
@@ -705,6 +871,7 @@ export function PlayerFormModal({
 
                 const filteredGamesForSlot = games.filter(
                   (g) =>
+                    g.type !== 'mass' &&
                     isGameEligibleForSlot(key, g, gender) &&
                     (!otherSelectedGameIds.has(g.id) || g.id === slotDraft.gameId)
                 );
@@ -910,6 +1077,20 @@ export function PlayerFormModal({
                     <span>
                       A bracket for {gName} already includes this player on the old team. Reset that bracket first to avoid a mismatch.
                     </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {moveConfirmData.separationPartnerNames.length > 0 && (
+              <div className="space-y-1.5">
+                {moveConfirmData.separationPartnerNames.map((partnerName) => (
+                  <div
+                    key={partnerName}
+                    className="flex items-start gap-2 p-2.5 rounded-xl border border-status-amber-edge bg-status-amber-bg text-status-amber-fg text-xs font-medium leading-snug"
+                  >
+                    <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+                    <span>{partnerName} is on this team</span>
                   </div>
                 ))}
               </div>

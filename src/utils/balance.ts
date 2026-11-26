@@ -9,6 +9,7 @@ import {
   Gender,
   Player,
   PlayerEntry,
+  SeparationPair,
   SkillLevel,
   TeamId,
 } from '../types/models';
@@ -23,6 +24,53 @@ export const COST_WEIGHTS = {
 export const ROSTER_HEADCOUNT_WEIGHT = 2;
 export const ROSTER_DEPARTMENT_WEIGHT = 3;
 export const ROSTER_DEPT_GENDER_WEIGHT = 2;
+export const ROSTER_CHURCH_WEIGHT = 0.5;
+export const SEPARATION_PENALTY = 1000;
+
+export function getPlayerChurchKey(player: Pick<Player, 'church'>): string {
+  return (player.church ?? '').trim();
+}
+
+export interface ChurchTeamCount {
+  key: string;
+  label: string;
+  blue: number;
+  red: number;
+  total: number;
+}
+
+export function computeChurchCounts(
+  players: readonly Player[],
+  proposedMap?: ReadonlyMap<string, TeamId>
+): ChurchTeamCount[] {
+  const map = new Map<string, { blue: number; red: number; total: number }>();
+  for (const p of players) {
+    const key = getPlayerChurchKey(p);
+    let bucket = map.get(key);
+    if (!bucket) {
+      bucket = { blue: 0, red: 0, total: 0 };
+      map.set(key, bucket);
+    }
+    bucket.total += 1;
+    const team = p.team ?? proposedMap?.get(p.id) ?? null;
+    if (team === 'blue') bucket.blue += 1;
+    else if (team === 'red') bucket.red += 1;
+  }
+  return Array.from(map.entries())
+    .filter(([, counts]) => counts.total > 0)
+    .map(([key, counts]) => ({
+      key,
+      label: key || 'Main church',
+      blue: counts.blue,
+      red: counts.red,
+      total: counts.total,
+    }))
+    .sort((a, b) => {
+      if (a.key === '' && b.key !== '') return -1;
+      if (b.key === '' && a.key !== '') return 1;
+      return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' });
+    });
+}
 
 export type DeptGenderKey =
   | 'Kids'
@@ -80,15 +128,141 @@ export function getEffectiveLevel(entry: PlayerEntry): SkillLevel {
   return entry.overrideLevel ?? entry.selfLevel;
 }
 
+export function getRegularEntries(
+  player: Pick<Player, 'entries'>,
+  gameById?: ReadonlyMap<string, Game>
+): PlayerEntry[] {
+  if (!gameById) return player.entries;
+  return player.entries.filter((entry) => {
+    const game = gameById.get(entry.gameId);
+    return !game || game.type !== 'mass';
+  });
+}
+
 export function getPlayerTotalEffectiveLevel(
   player: Player,
   gameById?: ReadonlyMap<string, Game>
 ): number {
-  return player.entries.reduce((sum, entry) => {
+  return getRegularEntries(player, gameById).reduce((sum, entry) => {
     const game = gameById?.get(entry.gameId);
     if (game && !game.usesSkillLevel) return sum;
     return sum + getEffectiveLevel(entry);
   }, 0);
+}
+
+export interface UnresolvedSeparation {
+  id: string;
+  aName: string;
+  bName: string;
+  team: TeamId;
+}
+
+function getActiveSeparations(
+  separations: readonly SeparationPair[],
+  playerById: ReadonlyMap<string, Player>
+): SeparationPair[] {
+  const seen = new Set<string>();
+  const active: SeparationPair[] = [];
+  for (const pair of separations) {
+    if (!pair.aId || !pair.bId || pair.aId === pair.bId) continue;
+    if (!playerById.has(pair.aId) || !playerById.has(pair.bId)) continue;
+    const key = pair.aId < pair.bId ? `${pair.aId}::${pair.bId}` : `${pair.bId}::${pair.aId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    active.push(pair);
+  }
+  return active;
+}
+
+function getSeparationPartnerIds(
+  separations: readonly SeparationPair[],
+  playerById: ReadonlyMap<string, Player>
+): Set<string> {
+  const ids = new Set<string>();
+  for (const pair of getActiveSeparations(separations, playerById)) {
+    ids.add(pair.aId);
+    ids.add(pair.bId);
+  }
+  return ids;
+}
+
+export function getSeparationConflictsForTeam(
+  playerId: string,
+  targetTeam: TeamId,
+  players: readonly Player[],
+  separations: readonly SeparationPair[]
+): Player[] {
+  const playerById = new Map(players.map((p) => [p.id, p]));
+  const conflicts: Player[] = [];
+  const seen = new Set<string>();
+  for (const pair of getActiveSeparations(separations, playerById)) {
+    const partnerId =
+      pair.aId === playerId ? pair.bId : pair.bId === playerId ? pair.aId : null;
+    if (!partnerId || seen.has(partnerId)) continue;
+    const partner = playerById.get(partnerId);
+    if (partner && partner.team === targetTeam) {
+      seen.add(partnerId);
+      conflicts.push(partner);
+    }
+  }
+  return conflicts.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function hasSeparationOddCycle(
+  separations: readonly SeparationPair[],
+  players: readonly Player[]
+): boolean {
+  const playerById = new Map(players.map((p) => [p.id, p]));
+  const adj = new Map<string, string[]>();
+  for (const pair of getActiveSeparations(separations, playerById)) {
+    if (!adj.has(pair.aId)) adj.set(pair.aId, []);
+    if (!adj.has(pair.bId)) adj.set(pair.bId, []);
+    adj.get(pair.aId)!.push(pair.bId);
+    adj.get(pair.bId)!.push(pair.aId);
+  }
+  const color = new Map<string, 0 | 1>();
+  for (const start of adj.keys()) {
+    if (color.has(start)) continue;
+    color.set(start, 0);
+    const queue = [start];
+    for (let i = 0; i < queue.length; i++) {
+      const curr = queue[i];
+      const currColor = color.get(curr)!;
+      for (const next of adj.get(curr) ?? []) {
+        const nextColor = color.get(next);
+        if (nextColor === undefined) {
+          color.set(next, currColor === 0 ? 1 : 0);
+          queue.push(next);
+        } else if (nextColor === currColor) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function findUnresolvedSeparations(
+  separations: readonly SeparationPair[],
+  playerById: ReadonlyMap<string, Player>,
+  getTeam: (playerId: string) => TeamId | null
+): UnresolvedSeparation[] {
+  const unresolved: UnresolvedSeparation[] = [];
+  for (const pair of getActiveSeparations(separations, playerById)) {
+    const teamA = getTeam(pair.aId);
+    const teamB = getTeam(pair.bId);
+    if (teamA && teamA === teamB) {
+      const playerA = playerById.get(pair.aId)!;
+      const playerB = playerById.get(pair.bId)!;
+      unresolved.push({
+        id: pair.id,
+        aName: playerA.name,
+        bName: playerB.name,
+        team: teamA,
+      });
+    }
+  }
+  return unresolved;
 }
 
 export function isGenderEligibleForGame(gender: Gender, game: Game): boolean {
@@ -257,7 +431,9 @@ export function computeRosterCost(
   blueDeptCounts: Record<Department, number>,
   redDeptCounts: Record<Department, number>,
   blueDeptGenderCounts?: Record<DeptGenderKey, number>,
-  redDeptGenderCounts?: Record<DeptGenderKey, number>
+  redDeptGenderCounts?: Record<DeptGenderKey, number>,
+  blueChurchCounts?: ReadonlyMap<string, number>,
+  redChurchCounts?: ReadonlyMap<string, number>
 ): number {
   const headDiff = blueTotal - redTotal;
   let deptSqSum = 0;
@@ -272,10 +448,29 @@ export function computeRosterCost(
       deptGenderSqSum += dg * dg;
     }
   }
+  let churchSqSum = 0;
+  if (blueChurchCounts || redChurchCounts) {
+    const seen = new Set<string>();
+    if (blueChurchCounts) {
+      for (const [key, bCount] of blueChurchCounts.entries()) {
+        seen.add(key);
+        const dc = bCount - (redChurchCounts?.get(key) ?? 0);
+        churchSqSum += dc * dc;
+      }
+    }
+    if (redChurchCounts) {
+      for (const [key, rCount] of redChurchCounts.entries()) {
+        if (seen.has(key)) continue;
+        const dc = (blueChurchCounts?.get(key) ?? 0) - rCount;
+        churchSqSum += dc * dc;
+      }
+    }
+  }
   return (
     ROSTER_HEADCOUNT_WEIGHT * (headDiff * headDiff) +
     ROSTER_DEPARTMENT_WEIGHT * deptSqSum +
-    ROSTER_DEPT_GENDER_WEIGHT * deptGenderSqSum
+    ROSTER_DEPT_GENDER_WEIGHT * deptGenderSqSum +
+    ROSTER_CHURCH_WEIGHT * churchSqSum
   );
 }
 
@@ -336,39 +531,51 @@ export function computeAllGameStats(
   games: Game[],
   proposedMap?: ReadonlyMap<string, TeamId>
 ): GameStats[] {
-  return games.map((g) => computeGameStats(players, g.id, proposedMap, g));
+  return games
+    .filter((g) => g.type !== 'mass')
+    .map((g) => computeGameStats(players, g.id, proposedMap, g));
 }
 
 export function computeTotalCost(
   players: Player[],
   games: Game[] = [],
-  proposedMap?: ReadonlyMap<string, TeamId>
+  proposedMap?: ReadonlyMap<string, TeamId>,
+  separations: readonly SeparationPair[] = []
 ): number {
   const gameById = new Map(games.map((g) => [g.id, g]));
+  const playerById = new Map(players.map((p) => [p.id, p]));
   const gameMap = new Map<string, GameBucketWithDivisions>();
+  const teamByPlayerId = new Map<string, TeamId>();
   let blueTotal = 0;
   let redTotal = 0;
   const blueDeptCounts: Record<Department, number> = { Kids: 0, YP: 0, SP: 0, Adults: 0 };
   const redDeptCounts: Record<Department, number> = { Kids: 0, YP: 0, SP: 0, Adults: 0 };
   const blueDeptGenderCounts = emptyDeptGenderCounts();
   const redDeptGenderCounts = emptyDeptGenderCounts();
+  const blueChurchCounts = new Map<string, number>();
+  const redChurchCounts = new Map<string, number>();
 
   for (const player of players) {
     const assignedTeam = player.team ?? proposedMap?.get(player.id) ?? null;
     if (!assignedTeam) continue;
+    teamByPlayerId.set(player.id, assignedTeam);
 
     const dgKey = getDeptGenderKey(player);
+    const churchKey = getPlayerChurchKey(player);
     if (assignedTeam === 'blue') {
       blueTotal += 1;
       blueDeptCounts[player.department] += 1;
       blueDeptGenderCounts[dgKey] += 1;
+      blueChurchCounts.set(churchKey, (blueChurchCounts.get(churchKey) ?? 0) + 1);
     } else {
       redTotal += 1;
       redDeptCounts[player.department] += 1;
       redDeptGenderCounts[dgKey] += 1;
+      redChurchCounts.set(churchKey, (redChurchCounts.get(churchKey) ?? 0) + 1);
     }
 
     for (const entry of player.entries) {
+      if (gameById.get(entry.gameId)?.type === 'mass') continue;
       let bucket = gameMap.get(entry.gameId);
       if (!bucket) {
         bucket = createEmptyBucket();
@@ -398,10 +605,18 @@ export function computeTotalCost(
     blueDeptCounts,
     redDeptCounts,
     blueDeptGenderCounts,
-    redDeptGenderCounts
+    redDeptGenderCounts,
+    blueChurchCounts,
+    redChurchCounts
   );
   for (const [gameId, bucket] of gameMap.entries()) {
     totalCost += computeGameBucketCost(bucket, gameById.get(gameId));
+  }
+  for (const pair of getActiveSeparations(separations, playerById)) {
+    const teamA = teamByPlayerId.get(pair.aId);
+    if (teamA && teamA === teamByPlayerId.get(pair.bId)) {
+      totalCost += SEPARATION_PENALTY;
+    }
   }
   return totalCost;
 }
@@ -410,38 +625,55 @@ export function computeTotalCost(
 interface MutableRosterState {
   buckets: Map<string, GameBucketWithDivisions>;
   gameById: Map<string, Game>;
+  teamByPlayerId: Map<string, TeamId>;
+  separationPairs: SeparationPair[];
   blueTotalPlayers: number;
   redTotalPlayers: number;
   blueDeptCounts: Record<Department, number>;
   redDeptCounts: Record<Department, number>;
   blueDeptGenderCounts: Record<DeptGenderKey, number>;
   redDeptGenderCounts: Record<DeptGenderKey, number>;
+  blueChurchCounts: Map<string, number>;
+  redChurchCounts: Map<string, number>;
 }
 
-function buildMutableState(players: Player[], games: Game[]): MutableRosterState {
+function buildMutableState(
+  players: Player[],
+  games: Game[],
+  separations: readonly SeparationPair[] = []
+): MutableRosterState {
   const buckets = new Map<string, GameBucketWithDivisions>();
   const gameById = new Map(games.map((g) => [g.id, g]));
+  const playerById = new Map(players.map((p) => [p.id, p]));
+  const teamByPlayerId = new Map<string, TeamId>();
   let blueTotalPlayers = 0;
   let redTotalPlayers = 0;
   const blueDeptCounts: Record<Department, number> = { Kids: 0, YP: 0, SP: 0, Adults: 0 };
   const redDeptCounts: Record<Department, number> = { Kids: 0, YP: 0, SP: 0, Adults: 0 };
   const blueDeptGenderCounts = emptyDeptGenderCounts();
   const redDeptGenderCounts = emptyDeptGenderCounts();
+  const blueChurchCounts = new Map<string, number>();
+  const redChurchCounts = new Map<string, number>();
 
   for (const player of players) {
     if (!player.team) continue;
+    teamByPlayerId.set(player.id, player.team);
     const dgKey = getDeptGenderKey(player);
+    const churchKey = getPlayerChurchKey(player);
     if (player.team === 'blue') {
       blueTotalPlayers += 1;
       blueDeptCounts[player.department] += 1;
       blueDeptGenderCounts[dgKey] += 1;
+      blueChurchCounts.set(churchKey, (blueChurchCounts.get(churchKey) ?? 0) + 1);
     } else {
       redTotalPlayers += 1;
       redDeptCounts[player.department] += 1;
       redDeptGenderCounts[dgKey] += 1;
+      redChurchCounts.set(churchKey, (redChurchCounts.get(churchKey) ?? 0) + 1);
     }
 
     for (const entry of player.entries) {
+      if (gameById.get(entry.gameId)?.type === 'mass') continue;
       let bucket = buckets.get(entry.gameId);
       if (!bucket) {
         bucket = createEmptyBucket();
@@ -468,12 +700,16 @@ function buildMutableState(players: Player[], games: Game[]): MutableRosterState
   return {
     buckets,
     gameById,
+    teamByPlayerId,
+    separationPairs: getActiveSeparations(separations, playerById),
     blueTotalPlayers,
     redTotalPlayers,
     blueDeptCounts,
     redDeptCounts,
     blueDeptGenderCounts,
     redDeptGenderCounts,
+    blueChurchCounts,
+    redChurchCounts,
   };
 }
 
@@ -483,18 +719,34 @@ function applyPlayerToState(
   team: TeamId,
   sign: 1 | -1
 ): void {
+  if (sign === 1) {
+    state.teamByPlayerId.set(player.id, team);
+  } else {
+    state.teamByPlayerId.delete(player.id);
+  }
+
   const dgKey = getDeptGenderKey(player);
+  const churchKey = getPlayerChurchKey(player);
   if (team === 'blue') {
     state.blueTotalPlayers += sign;
     state.blueDeptCounts[player.department] += sign;
     state.blueDeptGenderCounts[dgKey] += sign;
+    state.blueChurchCounts.set(
+      churchKey,
+      (state.blueChurchCounts.get(churchKey) ?? 0) + sign
+    );
   } else {
     state.redTotalPlayers += sign;
     state.redDeptCounts[player.department] += sign;
     state.redDeptGenderCounts[dgKey] += sign;
+    state.redChurchCounts.set(
+      churchKey,
+      (state.redChurchCounts.get(churchKey) ?? 0) + sign
+    );
   }
 
   for (const entry of player.entries) {
+    if (state.gameById.get(entry.gameId)?.type === 'mass') continue;
     let bucket = state.buckets.get(entry.gameId);
     if (!bucket) {
       bucket = createEmptyBucket();
@@ -518,6 +770,40 @@ function applyPlayerToState(
   }
 }
 
+function computeStateSeparationCost(state: MutableRosterState): number {
+  let penalty = 0;
+  for (const pair of state.separationPairs) {
+    const teamA = state.teamByPlayerId.get(pair.aId);
+    if (teamA && teamA === state.teamByPlayerId.get(pair.bId)) {
+      penalty += SEPARATION_PENALTY;
+    }
+  }
+  return penalty;
+}
+
+function computeLocalSeparationCost(
+  state: MutableRosterState,
+  id1: string,
+  id2: string
+): number {
+  let penalty = 0;
+  for (const pair of state.separationPairs) {
+    if (
+      pair.aId !== id1 &&
+      pair.bId !== id1 &&
+      pair.aId !== id2 &&
+      pair.bId !== id2
+    ) {
+      continue;
+    }
+    const teamA = state.teamByPlayerId.get(pair.aId);
+    if (teamA && teamA === state.teamByPlayerId.get(pair.bId)) {
+      penalty += SEPARATION_PENALTY;
+    }
+  }
+  return penalty;
+}
+
 function sumAllStateCost(state: MutableRosterState): number {
   let total = computeRosterCost(
     state.blueTotalPlayers,
@@ -525,11 +811,14 @@ function sumAllStateCost(state: MutableRosterState): number {
     state.blueDeptCounts,
     state.redDeptCounts,
     state.blueDeptGenderCounts,
-    state.redDeptGenderCounts
+    state.redDeptGenderCounts,
+    state.blueChurchCounts,
+    state.redChurchCounts
   );
   for (const [gameId, bucket] of state.buckets.entries()) {
     total += computeGameBucketCost(bucket, state.gameById.get(gameId));
   }
+  total += computeStateSeparationCost(state);
   return total;
 }
 
@@ -539,17 +828,24 @@ function deltaCostForSwap(
   pRed: Player
 ): number {
   const touchedGames = new Set<string>();
-  for (const e of pBlue.entries) touchedGames.add(e.gameId);
-  for (const e of pRed.entries) touchedGames.add(e.gameId);
+  for (const e of pBlue.entries) {
+    if (state.gameById.get(e.gameId)?.type !== 'mass') touchedGames.add(e.gameId);
+  }
+  for (const e of pRed.entries) {
+    if (state.gameById.get(e.gameId)?.type !== 'mass') touchedGames.add(e.gameId);
+  }
 
-  let before = computeRosterCost(
-    state.blueTotalPlayers,
-    state.redTotalPlayers,
-    state.blueDeptCounts,
-    state.redDeptCounts,
-    state.blueDeptGenderCounts,
-    state.redDeptGenderCounts
-  );
+  let before =
+    computeRosterCost(
+      state.blueTotalPlayers,
+      state.redTotalPlayers,
+      state.blueDeptCounts,
+      state.redDeptCounts,
+      state.blueDeptGenderCounts,
+      state.redDeptGenderCounts,
+      state.blueChurchCounts,
+      state.redChurchCounts
+    ) + computeLocalSeparationCost(state, pBlue.id, pRed.id);
   for (const gId of touchedGames) {
     const b = state.buckets.get(gId);
     if (b) before += computeGameBucketCost(b, state.gameById.get(gId));
@@ -560,14 +856,17 @@ function deltaCostForSwap(
   applyPlayerToState(state, pBlue, 'red', 1);
   applyPlayerToState(state, pRed, 'blue', 1);
 
-  let after = computeRosterCost(
-    state.blueTotalPlayers,
-    state.redTotalPlayers,
-    state.blueDeptCounts,
-    state.redDeptCounts,
-    state.blueDeptGenderCounts,
-    state.redDeptGenderCounts
-  );
+  let after =
+    computeRosterCost(
+      state.blueTotalPlayers,
+      state.redTotalPlayers,
+      state.blueDeptCounts,
+      state.redDeptCounts,
+      state.blueDeptGenderCounts,
+      state.redDeptGenderCounts,
+      state.blueChurchCounts,
+      state.redChurchCounts
+    ) + computeLocalSeparationCost(state, pBlue.id, pRed.id);
   for (const gId of touchedGames) {
     const b = state.buckets.get(gId);
     if (b) after += computeGameBucketCost(b, state.gameById.get(gId));
@@ -612,16 +911,22 @@ export interface BulkAssignmentPlan {
     blue: Record<DeptGenderKey, number>;
     red: Record<DeptGenderKey, number>;
   };
+  churchAfter: ChurchTeamCount[];
+  unresolvedSeparations: UnresolvedSeparation[];
 }
 
 function currentRosterCost(state: MutableRosterState): number {
-  return computeRosterCost(
-    state.blueTotalPlayers,
-    state.redTotalPlayers,
-    state.blueDeptCounts,
-    state.redDeptCounts,
-    state.blueDeptGenderCounts,
-    state.redDeptGenderCounts
+  return (
+    computeRosterCost(
+      state.blueTotalPlayers,
+      state.redTotalPlayers,
+      state.blueDeptCounts,
+      state.redDeptCounts,
+      state.blueDeptGenderCounts,
+      state.redDeptGenderCounts,
+      state.blueChurchCounts,
+      state.redChurchCounts
+    ) + computeStateSeparationCost(state)
   );
 }
 
@@ -630,12 +935,32 @@ function deltaRosterCostForSwap(
   pBlue: Player,
   pRed: Player
 ): number {
-  const before = currentRosterCost(state);
+  const before =
+    computeRosterCost(
+      state.blueTotalPlayers,
+      state.redTotalPlayers,
+      state.blueDeptCounts,
+      state.redDeptCounts,
+      state.blueDeptGenderCounts,
+      state.redDeptGenderCounts,
+      state.blueChurchCounts,
+      state.redChurchCounts
+    ) + computeLocalSeparationCost(state, pBlue.id, pRed.id);
   applyPlayerToState(state, pBlue, 'blue', -1);
   applyPlayerToState(state, pRed, 'red', -1);
   applyPlayerToState(state, pBlue, 'red', 1);
   applyPlayerToState(state, pRed, 'blue', 1);
-  const after = currentRosterCost(state);
+  const after =
+    computeRosterCost(
+      state.blueTotalPlayers,
+      state.redTotalPlayers,
+      state.blueDeptCounts,
+      state.redDeptCounts,
+      state.blueDeptGenderCounts,
+      state.redDeptGenderCounts,
+      state.blueChurchCounts,
+      state.redChurchCounts
+    ) + computeLocalSeparationCost(state, pBlue.id, pRed.id);
   applyPlayerToState(state, pBlue, 'red', -1);
   applyPlayerToState(state, pRed, 'blue', -1);
   applyPlayerToState(state, pBlue, 'blue', 1);
@@ -643,32 +968,44 @@ function deltaRosterCostForSwap(
   return after - before;
 }
 
-export function planBulkAssignment(allPlayers: Player[], games: Game[]): BulkAssignmentPlan {
+export function planBulkAssignment(
+  allPlayers: Player[],
+  games: Game[],
+  separations: readonly SeparationPair[] = []
+): BulkAssignmentPlan {
+  const regularGames = games.filter((g) => g.type !== 'mass');
   const gameById = new Map(games.map((g) => [g.id, g]));
+  const playerById = new Map(allPlayers.map((p) => [p.id, p]));
+  const rulePlayerIds = getSeparationPartnerIds(separations, playerById);
   const unassigned = allPlayers.filter((p) => p.team === null);
 
   const withGames = unassigned
-    .filter((p) => p.entries.length > 0)
+    .filter((p) => getRegularEntries(p, gameById).length > 0)
     .sort((a, b) => {
       const levelDiff =
         getPlayerTotalEffectiveLevel(b, gameById) -
         getPlayerTotalEffectiveLevel(a, gameById);
       if (levelDiff !== 0) return levelDiff;
-      const entryDiff = b.entries.length - a.entries.length;
+      const entryDiff =
+        getRegularEntries(b, gameById).length - getRegularEntries(a, gameById).length;
       if (entryDiff !== 0) return entryDiff;
+      const ruleDiff = (rulePlayerIds.has(b.id) ? 1 : 0) - (rulePlayerIds.has(a.id) ? 1 : 0);
+      if (ruleDiff !== 0) return ruleDiff;
       if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
       return a.id.localeCompare(b.id);
     });
 
   const noGames = unassigned
-    .filter((p) => p.entries.length === 0)
+    .filter((p) => getRegularEntries(p, gameById).length === 0)
     .sort((a, b) => {
+      const ruleDiff = (rulePlayerIds.has(b.id) ? 1 : 0) - (rulePlayerIds.has(a.id) ? 1 : 0);
+      if (ruleDiff !== 0) return ruleDiff;
       if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
       return a.id.localeCompare(b.id);
     });
 
-  const beforeCost = computeTotalCost(allPlayers, games);
-  const state = buildMutableState(allPlayers, games);
+  const beforeCost = computeTotalCost(allPlayers, games, undefined, separations);
+  const state = buildMutableState(allPlayers, games, separations);
 
   // Phase 1: Players with at least one game (full cost + local swaps)
   const withGamesBlue: Player[] = [];
@@ -815,8 +1152,13 @@ export function planBulkAssignment(allPlayers: Player[], games: Game[]): BulkAss
     proposedTeamByPlayerId[p.id] = 'red';
   }
 
-  const afterCost = computeTotalCost(allPlayers, games, proposedMap);
-  const gameComparisons: GameBalanceComparison[] = games
+  const afterCost = computeTotalCost(allPlayers, games, proposedMap, separations);
+  const unresolvedSeparations = findUnresolvedSeparations(
+    separations,
+    playerById,
+    (id) => proposedMap.get(id) ?? playerById.get(id)?.team ?? null
+  );
+  const gameComparisons: GameBalanceComparison[] = regularGames
     .map((game) => ({
       game,
       before: computeGameStats(allPlayers, game.id, undefined, game),
@@ -869,6 +1211,8 @@ export function planBulkAssignment(allPlayers: Player[], games: Game[]): BulkAss
       blue: afterDeptGenderBlue,
       red: afterDeptGenderRed,
     },
+    churchAfter: computeChurchCounts(allPlayers, proposedMap),
+    unresolvedSeparations,
   };
 }
 
@@ -885,6 +1229,7 @@ export interface SingleAssignmentResult {
   team: TeamId;
   reason: string;
   joinedGames: JoinedGameBalance[];
+  unresolvedSeparations?: UnresolvedSeparation[];
 }
 
 function buildJoinedGameBalances(
@@ -900,7 +1245,7 @@ function buildJoinedGameBalances(
   return targetPlayer.entries
     .map((entry) => {
       const game = gameById.get(entry.gameId);
-      if (!game) return null;
+      if (!game || game.type === 'mass') return null;
       const stats = computeGameStats(updatedList, game.id, proposedMap, game);
       return {
         game,
@@ -918,13 +1263,26 @@ export function buildManualSingleAssignmentResult(
   targetPlayer: Player,
   chosen: TeamId,
   allPlayers: Player[],
-  games: Game[]
+  games: Game[],
+  separations: readonly SeparationPair[] = []
 ): SingleAssignmentResult {
   const existingPlayers = allPlayers.filter((p) => p.id !== targetPlayer.id);
+  const conflicts = getSeparationConflictsForTeam(
+    targetPlayer.id,
+    chosen,
+    existingPlayers,
+    separations
+  );
   return {
     team: chosen,
     reason: 'Assigned manually by Admin',
     joinedGames: buildJoinedGameBalances(targetPlayer, chosen, existingPlayers, games),
+    unresolvedSeparations: conflicts.map((partner) => ({
+      id: `${targetPlayer.id}::${partner.id}`,
+      aName: targetPlayer.name,
+      bName: partner.name,
+      team: chosen,
+    })),
   };
 }
 
@@ -934,9 +1292,6 @@ export function previewSingleTeamHint(
   allPlayers: Player[],
   games: Game[]
 ): string {
-  if (targetPlayer.entries.length === 0) {
-    return 'No games - affects overall headcount only';
-  }
   const existingPlayers = allPlayers.filter((p) => p.id !== targetPlayer.id);
   const joined = buildJoinedGameBalances(targetPlayer, team, existingPlayers, games);
   if (joined.length === 0) {
@@ -979,7 +1334,7 @@ export function previewMovePlayerGameBalances(
   return updatedEntries
     .map((entry) => {
       const game = gameById.get(entry.gameId);
-      if (!game) return null;
+      if (!game || game.type === 'mass') return null;
       const beforeStats = computeGameStats(beforePlayers, game.id, undefined, game);
       const afterStats = computeGameStats(afterPlayers, game.id, undefined, game);
       return {
@@ -995,10 +1350,15 @@ export function planSingleAssignment(
   targetPlayer: Player,
   allPlayers: Player[],
   games: Game[],
-  randomFn: () => number = Math.random
+  randomFn: () => number = Math.random,
+  separations: readonly SeparationPair[] = []
 ): SingleAssignmentResult {
   const existingPlayers = allPlayers.filter((p) => p.id !== targetPlayer.id);
-  const state = buildMutableState(existingPlayers, games);
+  const state = buildMutableState(
+    [...existingPlayers, { ...targetPlayer, team: null }],
+    games,
+    separations
+  );
 
   applyPlayerToState(state, targetPlayer, 'blue', 1);
   const blueCost = sumAllStateCost(state);
@@ -1022,6 +1382,18 @@ export function planSingleAssignment(
   // Generate clear one-line reason
   const teamLabel = chosen === 'blue' ? 'Blue' : 'Red';
   const otherTeam: TeamId = chosen === 'blue' ? 'red' : 'blue';
+  const conflictsOnChosen = getSeparationConflictsForTeam(
+    targetPlayer.id,
+    chosen,
+    existingPlayers,
+    separations
+  );
+  const conflictsOnOther = getSeparationConflictsForTeam(
+    targetPlayer.id,
+    otherTeam,
+    existingPlayers,
+    separations
+  );
   const gameById = new Map(games.map((g) => [g.id, g]));
 
   let bestHighlightGameName: string | null = null;
@@ -1031,6 +1403,7 @@ export function planSingleAssignment(
 
   for (const entry of targetPlayer.entries) {
     const game = gameById.get(entry.gameId);
+    if (game?.type === 'mass') continue;
     const b = state.buckets.get(entry.gameId);
     const effLvl = getEffectiveLevel(entry);
 
@@ -1065,7 +1438,9 @@ export function planSingleAssignment(
   }
 
   let reason: string;
-  if (bestHighlightGameName && fewerPlayers && lowerSkill) {
+  if (conflictsOnOther.length > conflictsOnChosen.length) {
+    reason = `Kept apart from ${conflictsOnOther.map((p) => p.name).join(', ')}`;
+  } else if (bestHighlightGameName && fewerPlayers && lowerSkill) {
     reason = `${teamLabel} had fewer ${bestHighlightGameName} players and lower total skill`;
   } else if (bestHighlightGameName && fewerPlayers) {
     reason = `${teamLabel} had fewer ${bestHighlightGameName} players`;
@@ -1081,6 +1456,12 @@ export function planSingleAssignment(
     team: chosen,
     reason,
     joinedGames: buildJoinedGameBalances(targetPlayer, chosen, existingPlayers, games),
+    unresolvedSeparations: conflictsOnChosen.map((partner) => ({
+      id: `${targetPlayer.id}::${partner.id}`,
+      aName: targetPlayer.name,
+      bName: partner.name,
+      team: chosen,
+    })),
   };
 }
 
@@ -1132,6 +1513,7 @@ export interface RebalancePlan {
     red: Record<DeptGenderKey, number>;
   };
   changedGames: RebalanceGameBadgeChange[];
+  unresolvedSeparations: UnresolvedSeparation[];
 }
 
 const DEPT_GENDER_REASON_LABELS: Record<DeptGenderKey, string> = {
@@ -1165,9 +1547,15 @@ function buildRebalanceMoveReason(
   toTeam: TeamId,
   totalsBefore: { blue: number; red: number },
   deptGenderBefore: { blue: Record<DeptGenderKey, number>; red: Record<DeptGenderKey, number> },
+  churchBefore: { blue: ReadonlyMap<string, number>; red: ReadonlyMap<string, number> },
   gameBeforeStats: ReadonlyMap<string, GameStats>,
-  gameById: ReadonlyMap<string, Game>
+  gameById: ReadonlyMap<string, Game>,
+  resolvedPartners: string[] = []
 ): string {
+  if (resolvedPartners.length > 0) {
+    return `separates from ${resolvedPartners.join(', ')}`;
+  }
+
   for (const entry of player.entries) {
     const g = gameById.get(entry.gameId);
     const st = gameBeforeStats.get(entry.gameId);
@@ -1188,6 +1576,11 @@ function buildRebalanceMoveReason(
     return `evens ${DEPT_GENDER_REASON_LABELS[dgKey]}`;
   }
 
+  const churchKey = getPlayerChurchKey(player);
+  if ((churchBefore[fromTeam].get(churchKey) ?? 0) > (churchBefore[toTeam].get(churchKey) ?? 0)) {
+    return `evens ${churchKey || 'Main church'}`;
+  }
+
   if (totalsBefore[fromTeam] > totalsBefore[toTeam]) {
     return 'evens team headcount';
   }
@@ -1199,12 +1592,15 @@ export function planRebalance(
   allPlayers: Player[],
   games: Game[],
   bracketsByGameId: ReadonlyMap<string, Bracket>,
-  pairsByGameId: ReadonlyMap<string, GamePairs>
+  pairsByGameId: ReadonlyMap<string, GamePairs>,
+  separations: readonly SeparationPair[] = []
 ): RebalancePlan {
   const MAX_REBALANCE_MOVES = 8;
   const MIN_COST_DROP = 0.5;
 
+  const regularGames = games.filter((g) => g.type !== 'mass');
   const gameById = new Map(games.map((g) => [g.id, g]));
+  const playerById = new Map(allPlayers.map((p) => [p.id, p]));
   const lockedGameIds = getLockedGameIds(bracketsByGameId, pairsByGameId);
 
   const assignedPlayers = allPlayers.filter(
@@ -1216,10 +1612,11 @@ export function planRebalance(
   const withGameUnlocked: (Player & { team: TeamId })[] = [];
 
   for (const p of assignedPlayers) {
-    const isLocked = p.entries.some((e) => lockedGameIds.has(e.gameId));
+    const regularEntries = getRegularEntries(p, gameById);
+    const isLocked = regularEntries.some((e) => lockedGameIds.has(e.gameId));
     if (isLocked) {
       lockedCount += 1;
-    } else if (p.entries.length === 0) {
+    } else if (regularEntries.length === 0) {
       noGameUnlocked.push(p);
     } else {
       withGameUnlocked.push(p);
@@ -1229,12 +1626,16 @@ export function planRebalance(
   const originalTeam = new Map<string, TeamId>(assignedPlayers.map((p) => [p.id, p.team]));
   const currentTeam = new Map<string, TeamId>(assignedPlayers.map((p) => [p.id, p.team]));
 
-  const state = buildMutableState(allPlayers, games);
+  const state = buildMutableState(allPlayers, games, separations);
   const beforeCost = sumAllStateCost(state);
   const totalsBefore = { blue: state.blueTotalPlayers, red: state.redTotalPlayers };
   const deptGenderBefore = {
     blue: { ...state.blueDeptGenderCounts },
     red: { ...state.redDeptGenderCounts },
+  };
+  const churchBefore = {
+    blue: new Map(state.blueChurchCounts),
+    red: new Map(state.redChurchCounts),
   };
 
   function getMovedCountWithPatch(patches: [string, TeamId][]): number {
@@ -1305,7 +1706,7 @@ export function planRebalance(
           fromTeam: cur,
           toTeam: next,
           improvement: baseCost - newCost,
-          noGameScore: p.entries.length === 0 ? 2 : 0,
+          noGameScore: getRegularEntries(p, gameById).length === 0 ? 2 : 0,
           movedAfter,
         };
         if (isBetter(step)) best = step;
@@ -1329,7 +1730,8 @@ export function planRebalance(
             pRed,
             improvement: -delta,
             noGameScore:
-              (pBlue.entries.length === 0 ? 1 : 0) + (pRed.entries.length === 0 ? 1 : 0),
+              (getRegularEntries(pBlue, gameById).length === 0 ? 1 : 0) +
+              (getRegularEntries(pRed, gameById).length === 0 ? 1 : 0),
             movedAfter,
           };
           if (isBetter(step)) best = step;
@@ -1356,10 +1758,12 @@ export function planRebalance(
   // Phase 1: Players with NO game entries
   runPhase(noGameUnlocked, true);
 
-  // Phase 2: Only if headcount diff > 1 or any game is Unbalanced
+  // Phase 2: Only if headcount diff > 1, any game is Unbalanced, or separation conflict remains
   const headDiffAfterPhase1 = Math.abs(state.blueTotalPlayers - state.redTotalPlayers);
   if (
-    (headDiffAfterPhase1 > 1 || hasAnyUnbalancedGame(state, games)) &&
+    (headDiffAfterPhase1 > 1 ||
+      hasAnyUnbalancedGame(state, regularGames) ||
+      computeStateSeparationCost(state) > 0) &&
     getMovedCountWithPatch([]) < MAX_REBALANCE_MOVES
   ) {
     runPhase([...noGameUnlocked, ...withGameUnlocked], true);
@@ -1375,6 +1779,13 @@ export function planRebalance(
   const beforeGameStatsList = computeAllGameStats(allPlayers, games);
   const beforeGameStatsMap = new Map(beforeGameStatsList.map((s) => [s.gameId, s]));
 
+  const activeSeparations = state.separationPairs;
+  const unresolvedSeparations = findUnresolvedSeparations(
+    activeSeparations,
+    playerById,
+    (id) => currentTeam.get(id) ?? null
+  );
+
   const changesByPlayerId: Record<string, TeamId> = {};
   const moves: RebalanceMove[] = [];
 
@@ -1382,6 +1793,16 @@ export function planRebalance(
     const nextTeam = currentTeam.get(p.id)!;
     if (nextTeam !== p.team) {
       changesByPlayerId[p.id] = nextTeam;
+      const resolvedPartners: string[] = [];
+      for (const pair of activeSeparations) {
+        const partnerId =
+          pair.aId === p.id ? pair.bId : pair.bId === p.id ? pair.aId : null;
+        if (!partnerId) continue;
+        if (originalTeam.get(partnerId) === p.team && currentTeam.get(partnerId) === p.team) {
+          const partnerName = playerById.get(partnerId)?.name;
+          if (partnerName) resolvedPartners.push(partnerName);
+        }
+      }
       moves.push({
         player: p,
         fromTeam: p.team,
@@ -1392,8 +1813,10 @@ export function planRebalance(
           nextTeam,
           totalsBefore,
           deptGenderBefore,
+          churchBefore,
           beforeGameStatsMap,
-          gameById
+          gameById,
+          resolvedPartners
         ),
       });
     }
@@ -1410,7 +1833,7 @@ export function planRebalance(
   });
 
   const changedGames: RebalanceGameBadgeChange[] = [];
-  for (const game of games) {
+  for (const game of regularGames) {
     const before = beforeGameStatsMap.get(game.id) ?? computeGameStats(allPlayers, game.id, undefined, game);
     const after = computeGameStats(afterPlayers, game.id, undefined, game);
     const beforeBadge = getDisplayGameBalanceStatus(before);
@@ -1431,5 +1854,6 @@ export function planRebalance(
     deptGenderBefore,
     deptGenderAfter,
     changedGames,
+    unresolvedSeparations,
   };
 }

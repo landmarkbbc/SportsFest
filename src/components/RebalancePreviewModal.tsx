@@ -1,4 +1,4 @@
-import { ArrowRight, CheckCircle2, Lock, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CheckCircle2, Lock, X } from 'lucide-react';
 import {
   DEPT_GENDER_GROUPS,
   RebalancePlan,
@@ -63,6 +63,19 @@ export function RebalancePreviewModal({
               {plan.lockedCount} players are locked (their sport already has a bracket or pairs)
             </span>
           </div>
+
+          {plan.unresolvedSeparations.length > 0 && (
+            <div className="p-3 rounded-xl border border-status-amber-edge bg-status-amber-bg text-status-amber-fg text-xs font-medium space-y-1">
+              {plan.unresolvedSeparations.map((u) => (
+                <div key={u.id} className="flex items-center gap-2">
+                  <AlertTriangle size={14} className="shrink-0" />
+                  <span>
+                    Could not separate {u.aName} and {u.bName}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
 
           {!hasMoves ? (
             <div className="p-6 rounded-xl bg-nested border border-edge text-center space-y-2">

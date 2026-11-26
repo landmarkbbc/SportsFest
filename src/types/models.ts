@@ -6,13 +6,14 @@ export type Department = 'Kids' | 'YP' | 'SP' | 'Adults';
 
 export type Gender = 'M' | 'F';
 
-export type GameType = 'individual' | 'pairs' | 'team';
+export type GameType = 'individual' | 'pairs' | 'team' | 'mass';
 
 export type Eligibility = 'everyone' | 'men' | 'women';
 
 export type GameSession = 'morning' | 'afternoon';
 
 export type SportIconKey =
+  | 'users'
   | 'pawn'
   | 'tileS'
   | 'cubeW'
@@ -72,6 +73,7 @@ export interface Player {
   name: string;
   department: Department;
   gender: Gender;
+  church?: string;
   entries: PlayerEntry[];
   team: TeamId | null;
   isWalkIn: boolean;
@@ -196,6 +198,34 @@ export interface Bracket {
   updatedAt?: number;
 }
 
+export interface MassGameItem {
+  id: string;
+  name: string;
+  winner: TeamId | null;
+  points: number;
+}
+
+export interface MassGameDoc {
+  items: MassGameItem[];
+  updatedAt?: number;
+}
+
+export interface SeparationPair {
+  id: string;
+  aId: string;
+  bId: string;
+}
+
+export interface SeparationsDoc {
+  pairs: SeparationPair[];
+  updatedAt?: number;
+}
+
+export interface ChurchesDoc {
+  names: string[];
+  updatedAt?: number;
+}
+
 export const DEPARTMENTS: Department[] = ['Kids', 'YP', 'SP', 'Adults'];
 
 export const ENTRY_SLOTS: { key: EntrySlot; label: string }[] = [
@@ -215,6 +245,7 @@ export const GAME_TYPE_LABELS: Record<GameType, string> = {
   individual: 'Individual',
   pairs: 'Pairs',
   team: 'Team',
+  mass: 'Mass game',
 };
 
 export const ELIGIBILITY_LABELS: Record<Eligibility, string> = {

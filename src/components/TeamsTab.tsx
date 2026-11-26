@@ -22,9 +22,11 @@ import {
   DEPT_GENDER_GROUPS,
   DeptGenderKey,
   computeAllGameStats,
+  computeChurchCounts,
   emptyDeptGenderCounts,
   getDeptGenderKey,
   getDisplayGameBalanceStatus,
+  getRegularEntries,
 } from '../utils/balance';
 import { SportIcon } from './SportIcons';
 import { BalanceBadge } from './TeamBadge';
@@ -126,30 +128,42 @@ export function TeamsTab({
     [players]
   );
 
+  const gameById = useMemo(() => new Map(games.map((g) => [g.id, g])), [games]);
+  const regularGames = useMemo(
+    () => games.filter((g) => g.type !== 'mass'),
+    [games]
+  );
+
   const blueGroups = useMemo(
-    () => buildTeamDepartmentGroups(bluePlayers.filter((p) => p.entries.length > 0)),
-    [bluePlayers]
+    () =>
+      buildTeamDepartmentGroups(
+        bluePlayers.filter((p) => getRegularEntries(p, gameById).length > 0)
+      ),
+    [bluePlayers, gameById]
   );
 
   const redGroups = useMemo(
-    () => buildTeamDepartmentGroups(redPlayers.filter((p) => p.entries.length > 0)),
-    [redPlayers]
+    () =>
+      buildTeamDepartmentGroups(
+        redPlayers.filter((p) => getRegularEntries(p, gameById).length > 0)
+      ),
+    [redPlayers, gameById]
   );
 
   const blueNoSportsGroups = useMemo(
     () =>
-      buildTeamDepartmentGroups(bluePlayers.filter((p) => p.entries.length === 0)).filter(
-        (g) => g.members.length > 0
-      ),
-    [bluePlayers]
+      buildTeamDepartmentGroups(
+        bluePlayers.filter((p) => getRegularEntries(p, gameById).length === 0)
+      ).filter((g) => g.members.length > 0),
+    [bluePlayers, gameById]
   );
 
   const redNoSportsGroups = useMemo(
     () =>
-      buildTeamDepartmentGroups(redPlayers.filter((p) => p.entries.length === 0)).filter(
-        (g) => g.members.length > 0
-      ),
-    [redPlayers]
+      buildTeamDepartmentGroups(
+        redPlayers.filter((p) => getRegularEntries(p, gameById).length === 0)
+      ).filter((g) => g.members.length > 0),
+    [redPlayers, gameById]
   );
 
   const blueDeptCounts = useMemo(
@@ -171,6 +185,8 @@ export function TeamsTab({
     () => countByDeptGender(redPlayers),
     [redPlayers]
   );
+
+  const churchCounts = useMemo(() => computeChurchCounts(players), [players]);
 
   const allVisibleGroupKeys = useMemo(() => {
     const keys: string[] = [];
@@ -533,11 +549,37 @@ export function TeamsTab({
                 </div>
               </div>
 
-              {games.length === 0 ? (
+              {/* Church (all players) */}
+              {churchCounts.length > 0 && (
+                <div>
+                  <h3 className="text-[16px] font-semibold text-fg mb-3">
+                    Church (all players)
+                  </h3>
+                  <div className="bg-nested border border-edge rounded-xl p-4">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+                      {churchCounts.map((c) => (
+                        <div
+                          key={c.key || '__main__'}
+                          className="p-2.5 rounded-lg bg-surface border border-edge text-xs"
+                        >
+                          <p className="text-fg-muted font-medium truncate">{c.label}</p>
+                          <p className="text-sm font-semibold text-fg tabular-nums mt-1">
+                            <span className="text-blue-light">{c.blue}</span>
+                            <span className="text-fg-muted font-normal"> vs </span>
+                            <span className="text-red-light">{c.red}</span>
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {regularGames.length === 0 ? (
                 <p className="text-sm text-fg-muted text-center py-8">No games configured yet.</p>
               ) : (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  {games.map((game) => {
+                  {regularGames.map((game) => {
                     const stats = allGameStats.find((s) => s.gameId === game.id);
                     if (!stats) return null;
                     const displayStatus = getDisplayGameBalanceStatus(stats);

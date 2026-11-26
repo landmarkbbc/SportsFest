@@ -8,7 +8,7 @@ import {
   Role,
   TeamId,
 } from '../types/models';
-import { getEffectiveLevel } from '../utils/balance';
+import { getEffectiveLevel, getRegularEntries } from '../utils/balance';
 import { SportIcon } from './SportIcons';
 import { TeamIndicator } from './TeamBadge';
 
@@ -67,7 +67,12 @@ export function PlayersTab({
       if (teamFilter === 'blue' && p.team !== 'blue') return false;
       if (teamFilter === 'red' && p.team !== 'red') return false;
       if (deptFilter !== 'all' && p.department !== deptFilter) return false;
-      if (gameFilter === 'none' && p.entries.length > 0) return false;
+      if (
+        gameFilter === 'none' &&
+        getRegularEntries(p, gameById).length > 0
+      ) {
+        return false;
+      }
       if (
         gameFilter !== 'all' &&
         gameFilter !== 'none' &&
@@ -87,7 +92,7 @@ export function PlayersTab({
       if (nameCmp !== 0) return nameCmp;
       return a.id.localeCompare(b.id);
     });
-  }, [players, search, teamFilter, deptFilter, gameFilter, sortBy]);
+  }, [players, search, teamFilter, deptFilter, gameFilter, sortBy, gameById]);
 
   const selectedGameLabel =
     gameFilter === 'all'
@@ -344,6 +349,11 @@ export function PlayersTab({
                       <span className="text-xs text-fg-muted">
                         {player.gender === 'M' ? 'Male (M)' : 'Female (F)'}
                       </span>
+                      {player.church?.trim() && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs bg-nested border border-edge text-fg-muted">
+                          {player.church.trim()}
+                        </span>
+                      )}
                       {player.isWalkIn && (
                         <span className="text-xs text-fg-muted">· Walk-in</span>
                       )}
@@ -354,10 +364,12 @@ export function PlayersTab({
 
                 {/* Compact Game Chips or Muted Empty Label */}
                 <div className="flex flex-wrap gap-1.5 mt-3">
-                  {player.entries.length === 0 ? (
-                    <span className="text-xs text-fg-muted">No games yet</span>
-                  ) : (
-                    player.entries.map((entry) => {
+                  {(() => {
+                    const regularEntries = getRegularEntries(player, gameById);
+                    if (regularEntries.length === 0) {
+                      return <span className="text-xs text-fg-muted">No games yet</span>;
+                    }
+                    return regularEntries.map((entry) => {
                       const game = gameById.get(entry.gameId);
                       const gameName = game?.name ?? entry.gameId;
                       const lvl = getEffectiveLevel(entry);
@@ -374,8 +386,8 @@ export function PlayersTab({
                           </span>
                         </span>
                       );
-                    })
-                  )}
+                    });
+                  })()}
                 </div>
               </div>
 
@@ -478,7 +490,9 @@ export function PlayersTab({
                     {gameFilter === 'all' && <Check size={16} className="text-fg shrink-0" />}
                   </button>
 
-                  {games.map((g) => {
+                  {games
+                    .filter((g) => g.type !== 'mass')
+                    .map((g) => {
                     const active = gameFilter === g.id;
                     return (
                       <button

@@ -10,6 +10,7 @@ import {
   Game,
   GamePair,
   GamePairs,
+  MassGameDoc,
   Player,
   PlayerEntry,
   Role,
@@ -28,6 +29,7 @@ import {
   getGameParticipantsSummary,
 } from '../utils/bracket';
 import { BracketView } from './BracketView';
+import { MassGameView } from './MassGameView';
 import { SportIcon } from './SportIcons';
 import { BalanceBadge } from './TeamBadge';
 import { ToastAction } from './Toast';
@@ -37,6 +39,7 @@ interface SportDetailViewProps {
   players: Player[];
   bracketsByGameId: Map<string, Bracket>;
   pairsByGameId: Map<string, GamePairs>;
+  massGamesByGameId: Map<string, MassGameDoc>;
   role: Role;
   initialDivision?: SkillLevel | null;
   initialTab?: 'matches' | 'players';
@@ -177,6 +180,7 @@ export function SportDetailView({
   players,
   bracketsByGameId,
   pairsByGameId,
+  massGamesByGameId,
   role,
   initialDivision,
   initialTab,
@@ -424,6 +428,19 @@ export function SportDetailView({
       setActionTarget(null);
       setConfirmRemoveTarget({ player, entry, inBracket });
     }
+  }
+
+  if (game.type === 'mass') {
+    return (
+      <MassGameView
+        game={game}
+        massDoc={massGamesByGameId.get(game.id) ?? null}
+        role={role}
+        backLabel={backLabel}
+        onBack={onBack}
+        onShowToast={onShowToast}
+      />
+    );
   }
 
   return (

@@ -21,16 +21,21 @@ import {
   AppSettings,
   Bracket,
   BracketSlotSnapshot,
+  ChurchesDoc,
   DEFAULT_POINTS_CHAMPION,
   DEFAULT_POINTS_PER_MATCH_WIN,
   EventProgram,
   Game,
   GamePair,
   GamePairs,
+  MassGameDoc,
+  MassGameItem,
   PairMember,
   Player,
   PlayerEntry,
   SEED_GAMES,
+  SeparationPair,
+  SeparationsDoc,
   TeamId,
   UnpairedPlayer,
   getDefaultGameAllowsDraw,
@@ -160,6 +165,9 @@ export function slugifyGameId(name: string): string {
 }
 
 function normalizeGame(raw: Partial<Game> & { id: string; name: string }): Game {
+  const type = raw.type ?? 'individual';
+  const isMass = type === 'mass';
+
   const session =
     raw.session === 'morning' || raw.session === 'afternoon'
       ? raw.session
@@ -167,20 +175,27 @@ function normalizeGame(raw: Partial<Game> & { id: string; name: string }): Game 
 
   // Never overwrite an iconKey that is already set (including explicit null)
   const iconKey =
-    raw.iconKey !== undefined ? raw.iconKey : getDefaultGameIconKey(raw.name);
+    raw.iconKey !== undefined
+      ? raw.iconKey
+      : isMass
+        ? 'users'
+        : getDefaultGameIconKey(raw.name);
 
-  const usesSkillLevel =
-    raw.usesSkillLevel !== undefined
+  const usesSkillLevel = isMass
+    ? false
+    : raw.usesSkillLevel !== undefined
       ? Boolean(raw.usesSkillLevel)
       : getDefaultGameUsesSkillLevel(raw.name);
 
-  const hasDivisions =
-    raw.hasDivisions !== undefined
+  const hasDivisions = isMass
+    ? false
+    : raw.hasDivisions !== undefined
       ? Boolean(raw.hasDivisions)
       : getDefaultGameHasDivisions(raw.name);
 
-  const minPlayersPerTeam =
-    raw.minPlayersPerTeam !== undefined
+  const minPlayersPerTeam = isMass
+    ? null
+    : raw.minPlayersPerTeam !== undefined
       ? raw.minPlayersPerTeam
       : getDefaultGameMinPlayersPerTeam(raw.name);
 
@@ -194,8 +209,9 @@ function normalizeGame(raw: Partial<Game> & { id: string; name: string }): Game 
       ? Math.max(0, Math.min(99, Math.trunc(raw.pointsChampion)))
       : DEFAULT_POINTS_CHAMPION;
 
-  const allowsDraw =
-    raw.allowsDraw !== undefined
+  const allowsDraw = isMass
+    ? false
+    : raw.allowsDraw !== undefined
       ? Boolean(raw.allowsDraw)
       : getDefaultGameAllowsDraw(raw.name);
 
@@ -205,8 +221,8 @@ function normalizeGame(raw: Partial<Game> & { id: string; name: string }): Game 
   return {
     id: raw.id,
     name: raw.name,
-    type: raw.type ?? 'individual',
-    eligibility: raw.eligibility ?? 'everyone',
+    type,
+    eligibility: isMass ? 'everyone' : (raw.eligibility ?? 'everyone'),
     session,
     iconKey,
     usesSkillLevel,
@@ -259,6 +275,7 @@ export function subscribePlayers(
         const data = d.data() as Player;
         return {
           ...data,
+          church: typeof data.church === 'string' ? data.church.trim() : '',
           entries: Array.isArray(data.entries) ? data.entries : [],
         };
       });
@@ -349,6 +366,225 @@ export async function saveProgram(program: EventProgram): Promise<void> {
   }
 }
 
+export function subscribeSeparations(
+  onData: (pairs: SeparationPair[]) => void,
+  onError: (error: Error) => void
+): () => void {
+  const ref = doc(db, 'settings', 'separations');
+  return onSnapshot(
+    ref,
+    { includeMetadataChanges: true },
+    (snapshot) => {
+      if (!snapshot.exists()) {
+        onData([]);
+      } else {
+        const data = snapshot.data() as Partial<SeparationsDoc>;
+        const pairs = Array.isArray(data.pairs)
+          ? data.pairs.filter(
+              (p): p is SeparationPair =>
+                Boolean(
+                  p &&
+                    typeof p.id === 'string' &&
+                    typeof p.aId === 'string' &&
+                    typeof p.bId === 'string' &&
+                    p.aId &&
+                    p.bId &&
+                    p.aId !== p.bId
+                )
+            )
+          : [];
+        onData(pairs);
+      }
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.GET, 'settings/separations');
+      } catch (e) {
+        onError(e instanceof Error ? e : new Error(String(e)));
+      }
+    }
+  );
+}
+
+export async function saveSeparations(pairs: SeparationPair[]): Promise<void> {
+  const sanitized = pairs
+    .filter((p) => p.id && p.aId && p.bId && p.aId !== p.bId)
+    .map((p) => ({
+      id: p.id,
+      aId: p.aId,
+      bId: p.bId,
+    }));
+  try {
+    await setDoc(doc(db, 'settings', 'separations'), {
+      pairs: sanitized,
+      updatedAt: Date.now(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, 'settings/separations');
+  }
+}
+
+export function sortChurchNames(names: string[]): string[] {
+  const seen = new Set<string>();
+  const clean: string[] = [];
+  for (const raw of names) {
+    const trimmed = typeof raw === 'string' ? raw.trim().slice(0, 40) : '';
+    if (!trimmed) continue;
+    const lower = trimmed.toLowerCase();
+    if (lower === 'main church' || seen.has(lower)) continue;
+    seen.add(lower);
+    clean.push(trimmed);
+  }
+  return clean.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+
+export function subscribeChurches(
+  onData: (names: string[]) => void,
+  onError: (error: Error) => void
+): () => void {
+  const ref = doc(db, 'settings', 'churches');
+  return onSnapshot(
+    ref,
+    { includeMetadataChanges: true },
+    (snapshot) => {
+      if (!snapshot.exists()) {
+        onData([]);
+      } else {
+        const data = snapshot.data() as Partial<ChurchesDoc>;
+        onData(Array.isArray(data.names) ? sortChurchNames(data.names) : []);
+      }
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.GET, 'settings/churches');
+      } catch (e) {
+        onError(e instanceof Error ? e : new Error(String(e)));
+      }
+    }
+  );
+}
+
+export async function addChurchName(rawName: string): Promise<string> {
+  const clean = rawName.trim().slice(0, 40);
+  if (!clean) {
+    throw new Error('Church name is required.');
+  }
+  if (clean.toLowerCase() === 'main church') {
+    throw new Error('Name cannot be "Main church".');
+  }
+  const ref = doc(db, 'settings', 'churches');
+  try {
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      const current: string[] =
+        snap.exists() && Array.isArray((snap.data() as Partial<ChurchesDoc>).names)
+          ? sortChurchNames((snap.data() as Partial<ChurchesDoc>).names!)
+          : [];
+      if (current.some((n) => n.toLowerCase() === clean.toLowerCase())) {
+        throw new Error('Church already exists.');
+      }
+      tx.set(ref, {
+        names: sortChurchNames([...current, clean]),
+        updatedAt: Date.now(),
+      });
+    });
+    return clean;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message === 'Church already exists.' ||
+        error.message === 'Church name is required.' ||
+        error.message === 'Name cannot be "Main church".')
+    ) {
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.WRITE, 'settings/churches');
+  }
+}
+
+export async function renameChurchAndUpdatePlayers(
+  oldName: string,
+  rawNewName: string,
+  existingNames: string[],
+  players: Player[]
+): Promise<void> {
+  const cleanNew = rawNewName.trim().slice(0, 40);
+  if (!cleanNew) {
+    throw new Error('Church name is required.');
+  }
+  if (cleanNew.toLowerCase() === 'main church') {
+    throw new Error('Name cannot be "Main church".');
+  }
+  if (
+    existingNames.some(
+      (n) => n !== oldName && n.toLowerCase() === cleanNew.toLowerCase()
+    )
+  ) {
+    throw new Error('Church already exists.');
+  }
+  const nextNames = sortChurchNames(
+    existingNames.map((n) => (n === oldName ? cleanNew : n))
+  );
+  const affectedPlayers = players.filter((p) => (p.church ?? '').trim() === oldName);
+  const now = Date.now();
+  const CHUNK_SIZE = 400;
+
+  try {
+    if (affectedPlayers.length < CHUNK_SIZE) {
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'settings', 'churches'), { names: nextNames, updatedAt: now });
+      for (const p of affectedPlayers) {
+        batch.update(doc(db, 'players', p.id), { church: cleanNew, updatedAt: now });
+      }
+      await batch.commit();
+    } else {
+      await setDoc(doc(db, 'settings', 'churches'), { names: nextNames, updatedAt: now });
+      for (let i = 0; i < affectedPlayers.length; i += CHUNK_SIZE) {
+        const batch = writeBatch(db);
+        for (const p of affectedPlayers.slice(i, i + CHUNK_SIZE)) {
+          batch.update(doc(db, 'players', p.id), { church: cleanNew, updatedAt: now });
+        }
+        await batch.commit();
+      }
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, 'settings/churches');
+  }
+}
+
+export async function deleteChurchAndUpdatePlayers(
+  targetName: string,
+  existingNames: string[],
+  players: Player[]
+): Promise<void> {
+  const nextNames = sortChurchNames(existingNames.filter((n) => n !== targetName));
+  const affectedPlayers = players.filter((p) => (p.church ?? '').trim() === targetName);
+  const now = Date.now();
+  const CHUNK_SIZE = 400;
+
+  try {
+    if (affectedPlayers.length < CHUNK_SIZE) {
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'settings', 'churches'), { names: nextNames, updatedAt: now });
+      for (const p of affectedPlayers) {
+        batch.update(doc(db, 'players', p.id), { church: '', updatedAt: now });
+      }
+      await batch.commit();
+    } else {
+      await setDoc(doc(db, 'settings', 'churches'), { names: nextNames, updatedAt: now });
+      for (let i = 0; i < affectedPlayers.length; i += CHUNK_SIZE) {
+        const batch = writeBatch(db);
+        for (const p of affectedPlayers.slice(i, i + CHUNK_SIZE)) {
+          batch.update(doc(db, 'players', p.id), { church: '', updatedAt: now });
+        }
+        await batch.commit();
+      }
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, 'settings/churches');
+  }
+}
+
 // Settings & PINs
 export async function saveInitialPins(
   adminPinHash: string,
@@ -415,16 +651,39 @@ export type GameInput = Pick<
   | 'head'
 >;
 
-export async function createGame(input: GameInput): Promise<Game> {
+function buildMassGameItems(count: number): MassGameItem[] {
+  const safeCount = Math.max(1, Math.min(20, Math.trunc(count)));
+  return Array.from({ length: safeCount }, (_, idx) => ({
+    id: createId('mg'),
+    name: `Game ${idx + 1}`,
+    winner: null,
+    points: 1,
+  }));
+}
+
+export async function createGame(
+  input: GameInput,
+  massGameCount?: number
+): Promise<Game> {
   const now = Date.now();
   const id = slugifyGameId(input.name);
-  const usesSkillLevel = input.type === 'individual' && input.hasDivisions ? true : input.usesSkillLevel;
-  const hasDivisions = input.type === 'individual' && usesSkillLevel ? input.hasDivisions : false;
+  const isMass = input.type === 'mass';
+  const usesSkillLevel = isMass
+    ? false
+    : input.type === 'individual' && input.hasDivisions
+      ? true
+      : input.usesSkillLevel;
+  const hasDivisions = isMass
+    ? false
+    : input.type === 'individual' && usesSkillLevel
+      ? input.hasDivisions
+      : false;
   const minPlayersPerTeam =
-    input.type === 'team' && input.minPlayersPerTeam && input.minPlayersPerTeam > 0
+    !isMass && input.type === 'team' && input.minPlayersPerTeam && input.minPlayersPerTeam > 0
       ? Math.trunc(input.minPlayersPerTeam)
       : null;
-  const allowsDraw = input.type === 'individual' ? Boolean(input.allowsDraw) : false;
+  const allowsDraw =
+    !isMass && input.type === 'individual' ? Boolean(input.allowsDraw) : false;
   const trimmedHead = typeof input.head === 'string' ? input.head.trim().slice(0, 40) : '';
   const head = trimmedHead.length > 0 ? trimmedHead : null;
 
@@ -432,8 +691,8 @@ export async function createGame(input: GameInput): Promise<Game> {
     id,
     name: input.name.trim(),
     type: input.type,
-    eligibility: input.eligibility,
-    session: input.session,
+    eligibility: isMass ? 'everyone' : input.eligibility,
+    session: isMass ? 'morning' : input.session,
     iconKey: input.iconKey,
     usesSkillLevel,
     hasDivisions,
@@ -447,7 +706,17 @@ export async function createGame(input: GameInput): Promise<Game> {
   };
 
   try {
-    await setDoc(doc(db, 'games', id), game);
+    if (isMass) {
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'games', id), game);
+      batch.set(doc(db, 'massgames', id), {
+        items: buildMassGameItems(massGameCount ?? 1),
+        updatedAt: now,
+      });
+      await batch.commit();
+    } else {
+      await setDoc(doc(db, 'games', id), game);
+    }
     return game;
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, `games/${id}`);
@@ -456,34 +725,75 @@ export async function createGame(input: GameInput): Promise<Game> {
 
 export async function updateGame(
   gameId: string,
-  updates: GameInput
+  updates: GameInput,
+  massGameCount?: number
 ): Promise<void> {
-  const usesSkillLevel =
-    updates.type === 'individual' && updates.hasDivisions ? true : updates.usesSkillLevel;
-  const hasDivisions =
-    updates.type === 'individual' && usesSkillLevel ? updates.hasDivisions : false;
+  const isMass = updates.type === 'mass';
+  const usesSkillLevel = isMass
+    ? false
+    : updates.type === 'individual' && updates.hasDivisions
+      ? true
+      : updates.usesSkillLevel;
+  const hasDivisions = isMass
+    ? false
+    : updates.type === 'individual' && usesSkillLevel
+      ? updates.hasDivisions
+      : false;
   const minPlayersPerTeam =
-    updates.type === 'team' && updates.minPlayersPerTeam && updates.minPlayersPerTeam > 0
+    !isMass && updates.type === 'team' && updates.minPlayersPerTeam && updates.minPlayersPerTeam > 0
       ? Math.trunc(updates.minPlayersPerTeam)
       : null;
-  const allowsDraw = updates.type === 'individual' ? Boolean(updates.allowsDraw) : false;
+  const allowsDraw =
+    !isMass && updates.type === 'individual' ? Boolean(updates.allowsDraw) : false;
   const trimmedHead = typeof updates.head === 'string' ? updates.head.trim().slice(0, 40) : '';
   const head = trimmedHead.length > 0 ? trimmedHead : null;
 
+  const gamePatch = {
+    name: updates.name.trim(),
+    type: updates.type,
+    eligibility: isMass ? 'everyone' : updates.eligibility,
+    session: isMass ? 'morning' : updates.session,
+    iconKey: updates.iconKey,
+    usesSkillLevel,
+    hasDivisions,
+    minPlayersPerTeam,
+    allowsDraw,
+    head,
+    updatedAt: Date.now(),
+  };
+
   try {
-    await updateDoc(doc(db, 'games', gameId), {
-      name: updates.name.trim(),
-      type: updates.type,
-      eligibility: updates.eligibility,
-      session: updates.session,
-      iconKey: updates.iconKey,
-      usesSkillLevel,
-      hasDivisions,
-      minPlayersPerTeam,
-      allowsDraw,
-      head,
-      updatedAt: Date.now(),
-    });
+    if (isMass) {
+      const targetCount = Math.max(1, Math.min(20, Math.trunc(massGameCount ?? 1)));
+      const gameRef = doc(db, 'games', gameId);
+      const massRef = doc(db, 'massgames', gameId);
+      await runTransaction(db, async (tx) => {
+        const massSnap = await tx.get(massRef);
+        const existingItems: MassGameItem[] =
+          massSnap.exists() && Array.isArray((massSnap.data() as Partial<MassGameDoc>).items)
+            ? ((massSnap.data() as Partial<MassGameDoc>).items as MassGameItem[])
+            : [];
+        let nextItems: MassGameItem[];
+        if (targetCount > existingItems.length) {
+          const added = Array.from(
+            { length: targetCount - existingItems.length },
+            (_, idx) => ({
+              id: createId('mg'),
+              name: `Game ${existingItems.length + idx + 1}`,
+              winner: null,
+              points: 1,
+            })
+          );
+          nextItems = [...existingItems, ...added];
+        } else {
+          nextItems = existingItems.slice(0, targetCount);
+        }
+        tx.set(massRef, { items: nextItems, updatedAt: gamePatch.updatedAt });
+        tx.update(gameRef, gamePatch);
+      });
+    } else {
+      await updateDoc(doc(db, 'games', gameId), gamePatch);
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `games/${gameId}`);
   }
@@ -509,7 +819,8 @@ export async function updateGamePoints(
 
 export async function deleteGameAndCleanupPlayers(
   gameId: string,
-  players: Player[]
+  players: Player[],
+  isMass: boolean = false
 ): Promise<number> {
   const affectedPlayers = players.filter((p) =>
     p.entries.some((e) => e.gameId === gameId)
@@ -519,10 +830,12 @@ export async function deleteGameAndCleanupPlayers(
 
   type Op =
     | { kind: 'deleteGame' }
+    | { kind: 'deleteMassGame' }
     | { kind: 'updatePlayer'; player: Player };
 
   const ops: Op[] = [
     { kind: 'deleteGame' },
+    ...(isMass ? [{ kind: 'deleteMassGame' as const }] : []),
     ...affectedPlayers.map((player) => ({ kind: 'updatePlayer' as const, player })),
   ];
 
@@ -533,6 +846,8 @@ export async function deleteGameAndCleanupPlayers(
       for (const op of chunk) {
         if (op.kind === 'deleteGame') {
           batch.delete(doc(db, 'games', gameId));
+        } else if (op.kind === 'deleteMassGame') {
+          batch.delete(doc(db, 'massgames', gameId));
         } else {
           const remainingEntries = op.player.entries
             .filter((e) => e.gameId !== gameId)
@@ -574,6 +889,7 @@ export async function createPlayer(
     name: input.name.trim(),
     department: input.department,
     gender: input.gender,
+    church: (input.church ?? '').trim().slice(0, 40),
     entries: sanitizedEntries,
     team: input.team,
     isWalkIn: input.isWalkIn,
@@ -592,7 +908,7 @@ export async function createPlayer(
 
 export async function updatePlayer(
   playerId: string,
-  updates: Pick<Player, 'name' | 'department' | 'gender' | 'entries' | 'isWalkIn'> & {
+  updates: Pick<Player, 'name' | 'department' | 'gender' | 'church' | 'entries' | 'isWalkIn'> & {
     team?: TeamId | null;
   }
 ): Promise<void> {
@@ -607,6 +923,7 @@ export async function updatePlayer(
     name: updates.name.trim(),
     department: updates.department,
     gender: updates.gender,
+    church: (updates.church ?? '').trim().slice(0, 40),
     entries: sanitizedEntries,
     isWalkIn: updates.isWalkIn,
     updatedAt: Date.now(),
@@ -1354,5 +1671,196 @@ export async function deleteBracket(gameId: string): Promise<void> {
     });
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `brackets/${gameId}`);
+  }
+}
+
+// Mass Games (all mutations use runTransaction)
+function normalizeMassGameDoc(raw: Partial<MassGameDoc>): MassGameDoc {
+  const items: MassGameItem[] = Array.isArray(raw.items)
+    ? raw.items.map((item, idx) => ({
+        id: typeof item?.id === 'string' && item.id ? item.id : `mg_${idx + 1}`,
+        name:
+          typeof item?.name === 'string' && item.name.trim()
+            ? item.name.trim().slice(0, 40)
+            : `Game ${idx + 1}`,
+        winner: item?.winner === 'blue' || item?.winner === 'red' ? item.winner : null,
+        points:
+          typeof item?.points === 'number' && Number.isFinite(item.points)
+            ? Math.max(0, Math.min(99, Math.round(item.points * 10) / 10))
+            : 1,
+      }))
+    : [];
+  return {
+    items,
+    updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : undefined,
+  };
+}
+
+function isTxContentionError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const code = (error as { code?: unknown }).code;
+  return code === 'aborted' || code === 'failed-precondition';
+}
+
+export function subscribeMassGames(
+  onData: (massGamesByGameId: Map<string, MassGameDoc>) => void,
+  onError: (error: Error) => void
+): () => void {
+  const q = query(collection(db, 'massgames'));
+  return onSnapshot(
+    q,
+    { includeMetadataChanges: true },
+    (snapshot) => {
+      const map = new Map<string, MassGameDoc>();
+      for (const d of snapshot.docs) {
+        map.set(d.id, normalizeMassGameDoc(d.data() as Partial<MassGameDoc>));
+      }
+      onData(map);
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.LIST, 'massgames');
+      } catch (e) {
+        onError(e instanceof Error ? e : new Error(String(e)));
+      }
+    }
+  );
+}
+
+export async function toggleMassGameWinner(
+  gameId: string,
+  itemId: string,
+  team: TeamId,
+  expectedWinner: TeamId | null
+): Promise<void> {
+  const ref = doc(db, 'massgames', gameId);
+  try {
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) {
+        throw new StaleBracketError();
+      }
+      const current = normalizeMassGameDoc(snap.data() as Partial<MassGameDoc>);
+      const idx = current.items.findIndex((i) => i.id === itemId);
+      if (idx === -1) {
+        throw new StaleBracketError();
+      }
+      if (current.items[idx].winner !== expectedWinner) {
+        throw new StaleBracketError();
+      }
+      const nextWinner: TeamId | null = current.items[idx].winner === team ? null : team;
+      const nextItems = current.items.map((item, i) =>
+        i === idx ? { ...item, winner: nextWinner } : item
+      );
+      tx.update(ref, {
+        items: nextItems,
+        updatedAt: Date.now(),
+      });
+    });
+  } catch (error) {
+    if (error instanceof StaleBracketError) throw error;
+    if (isTxContentionError(error)) throw new StaleBracketError();
+    handleFirestoreError(error, OperationType.UPDATE, `massgames/${gameId}`);
+  }
+}
+
+export async function renameMassGameItem(
+  gameId: string,
+  itemId: string,
+  nextName: string,
+  expectedName: string
+): Promise<void> {
+  const cleanName = nextName.trim().slice(0, 40);
+  if (!cleanName) {
+    throw new Error('Game name is required.');
+  }
+  const ref = doc(db, 'massgames', gameId);
+  try {
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) {
+        throw new StaleBracketError();
+      }
+      const current = normalizeMassGameDoc(snap.data() as Partial<MassGameDoc>);
+      const idx = current.items.findIndex((i) => i.id === itemId);
+      if (idx === -1 || current.items[idx].name !== expectedName) {
+        throw new StaleBracketError();
+      }
+      const nextItems = current.items.map((item, i) =>
+        i === idx ? { ...item, name: cleanName } : item
+      );
+      tx.update(ref, {
+        items: nextItems,
+        updatedAt: Date.now(),
+      });
+    });
+  } catch (error) {
+    if (error instanceof StaleBracketError) throw error;
+    if (isTxContentionError(error)) throw new StaleBracketError();
+    handleFirestoreError(error, OperationType.UPDATE, `massgames/${gameId}`);
+  }
+}
+
+export async function updateMassGameItemPoints(
+  gameId: string,
+  itemId: string,
+  points: number
+): Promise<void> {
+  const clamped = Number.isFinite(points)
+    ? Math.max(0, Math.min(99, Math.round(points * 10) / 10))
+    : 0;
+  const ref = doc(db, 'massgames', gameId);
+  try {
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) {
+        throw new StaleBracketError();
+      }
+      const current = normalizeMassGameDoc(snap.data() as Partial<MassGameDoc>);
+      const idx = current.items.findIndex((i) => i.id === itemId);
+      if (idx === -1) return;
+      const nextItems = current.items.map((item, i) =>
+        i === idx ? { ...item, points: clamped } : item
+      );
+      tx.update(ref, {
+        items: nextItems,
+        updatedAt: Date.now(),
+      });
+    });
+  } catch (error) {
+    if (error instanceof StaleBracketError) throw error;
+    if (isTxContentionError(error)) throw new StaleBracketError();
+    handleFirestoreError(error, OperationType.UPDATE, `massgames/${gameId}`);
+  }
+}
+
+export async function resetMassGameResults(
+  gameId: string,
+  expectedUpdatedAt?: number
+): Promise<void> {
+  const ref = doc(db, 'massgames', gameId);
+  try {
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) {
+        throw new StaleBracketError();
+      }
+      const current = normalizeMassGameDoc(snap.data() as Partial<MassGameDoc>);
+      if (
+        expectedUpdatedAt !== undefined &&
+        (current.updatedAt ?? 0) !== expectedUpdatedAt
+      ) {
+        throw new StaleBracketError();
+      }
+      const nextItems = current.items.map((item) => ({ ...item, winner: null }));
+      tx.update(ref, {
+        items: nextItems,
+        updatedAt: Date.now(),
+      });
+    });
+  } catch (error) {
+    if (error instanceof StaleBracketError) throw error;
+    if (isTxContentionError(error)) throw new StaleBracketError();
+    handleFirestoreError(error, OperationType.UPDATE, `massgames/${gameId}`);
   }
 }

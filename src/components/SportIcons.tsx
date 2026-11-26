@@ -1,8 +1,10 @@
+import { Users } from 'lucide-react';
 import { SportIconKey } from '../types/models';
 
 export const ICON_FILTER = 'none';
 
 export const SPORT_ICON_OPTIONS: { key: SportIconKey; label: string }[] = [
+  { key: 'users', label: 'Users' },
   { key: 'pawn', label: 'Pawn' },
   { key: 'tileS', label: 'S Tile' },
   { key: 'cubeW', label: 'W Cube' },
@@ -19,7 +21,7 @@ const BASE_URL = import.meta.env.BASE_URL.endsWith('/')
   ? import.meta.env.BASE_URL
   : `${import.meta.env.BASE_URL}/`;
 
-const SPORT_ICON_SRC: Record<SportIconKey, string> = {
+const SPORT_ICON_SRC: Partial<Record<SportIconKey, string>> = {
   pawn: `${BASE_URL}icons/pawn.png`,
   tileS: `${BASE_URL}icons/tileS.png`,
   cubeW: `${BASE_URL}icons/cubeW.png`,
@@ -40,6 +42,15 @@ interface SportIconProps {
 
 export function SportIcon({ iconKey, size = 20, className = '' }: SportIconProps) {
   if (!iconKey || iconKey === 'none') return null;
+  if (iconKey === 'users') {
+    return (
+      <Users
+        size={size}
+        aria-hidden={true}
+        className={`shrink-0 ${className}`.trim()}
+      />
+    );
+  }
   const src = SPORT_ICON_SRC[iconKey as SportIconKey];
   if (!src) return null;
 

@@ -4,6 +4,7 @@ import {
   ELIGIBILITY_LABELS,
   GAME_TYPE_LABELS,
   Game,
+  MassGameDoc,
   Player,
 } from '../types/models';
 import { computeAllGameStats, getDisplayGameBalanceStatus } from '../utils/balance';
@@ -14,6 +15,7 @@ interface SportsTabProps {
   loading: boolean;
   games: Game[];
   players: Player[];
+  massGamesByGameId: Map<string, MassGameDoc>;
   onSelectGame: (game: Game) => void;
 }
 
@@ -21,12 +23,21 @@ export function SportsTab({
   loading,
   games,
   players,
+  massGamesByGameId,
   onSelectGame,
 }: SportsTabProps) {
   const statsByGameId = useMemo(() => {
     const list = computeAllGameStats(players, games);
     return new Map(list.map((s) => [s.gameId, s]));
   }, [players, games]);
+
+  const orderedGames = useMemo(
+    () => [
+      ...games.filter((g) => g.type === 'mass'),
+      ...games.filter((g) => g.type !== 'mass'),
+    ],
+    [games]
+  );
 
   if (loading) {
     return (
@@ -57,7 +68,68 @@ export function SportsTab({
 
   return (
     <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 lg:gap-4">
-      {games.map((game) => {
+      {orderedGames.map((game) => {
+        if (game.type === 'mass') {
+          const items = massGamesByGameId.get(game.id)?.items ?? [];
+          let blueWins = 0;
+          let redWins = 0;
+          for (const item of items) {
+            if (item.winner === 'blue') blueWins += 1;
+            else if (item.winner === 'red') redWins += 1;
+          }
+          const n = items.length;
+
+          return (
+            <button
+              key={game.id}
+              type="button"
+              onClick={() => onSelectGame(game)}
+              className="bg-surface border border-edge rounded-xl p-3 sm:p-4 hover:border-edge-hover transition-colors duration-150 text-left flex flex-col justify-between gap-3 min-h-[44px]"
+            >
+              <div className="space-y-2 w-full">
+                <div className="flex items-start gap-2">
+                  {game.iconKey && (
+                    <SportIcon
+                      iconKey={game.iconKey}
+                      size={24}
+                      className="text-fg mt-0.5"
+                    />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <h3 className="text-sm sm:text-[16px] font-semibold text-fg leading-snug break-words">
+                      {game.name}
+                    </h3>
+                  </div>
+                </div>
+
+                <p className="text-xs text-fg-muted leading-snug tabular-nums">
+                  Mass game - {n} {n === 1 ? 'game' : 'games'}
+                </p>
+
+                {game.head && (
+                  <p className="text-xs font-medium text-[#4ADE80] leading-snug break-words">
+                    In-charge: {game.head}
+                  </p>
+                )}
+              </div>
+
+              <div className="w-full pt-1">
+                <p className="flex items-center gap-1.5 text-xs tabular-nums flex-wrap font-medium">
+                  <span className="inline-flex items-center gap-1 text-blue-light">
+                    <span className="w-2 h-2 rounded-full bg-blue-team shrink-0" aria-hidden="true" />
+                    Blue {blueWins}
+                  </span>
+                  <span className="text-fg-muted">-</span>
+                  <span className="inline-flex items-center gap-1 text-red-light">
+                    Red {redWins}
+                    <span className="w-2 h-2 rounded-full bg-red-team shrink-0" aria-hidden="true" />
+                  </span>
+                </p>
+              </div>
+            </button>
+          );
+        }
+
         const stats = statsByGameId.get(game.id);
         const blueCount = stats?.blue.headcount ?? 0;
         const redCount = stats?.red.headcount ?? 0;

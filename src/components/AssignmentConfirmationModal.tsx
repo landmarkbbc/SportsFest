@@ -1,4 +1,4 @@
-import { CheckCircle2, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, X } from 'lucide-react';
 import { Player } from '../types/models';
 import { SingleAssignmentResult } from '../utils/balance';
 import { SportIcon } from './SportIcons';
@@ -67,6 +67,19 @@ export function AssignmentConfirmationModal({
           </div>
           <p className="text-sm text-fg">{result.reason}.</p>
         </div>
+
+        {result.unresolvedSeparations && result.unresolvedSeparations.length > 0 && (
+          <div className="p-3 rounded-xl border border-status-amber-edge bg-status-amber-bg text-status-amber-fg text-xs font-medium space-y-1">
+            {result.unresolvedSeparations.map((u) => (
+              <div key={u.id} className="flex items-center gap-2">
+                <AlertTriangle size={14} className="shrink-0" />
+                <span>
+                  Could not separate {u.aName} and {u.bName}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="space-y-2">
           <p className="text-xs font-medium text-fg-muted">Updated Game Balance</p>

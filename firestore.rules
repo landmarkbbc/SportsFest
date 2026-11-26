@@ -38,5 +38,10 @@ service cloud.firestore {
       allow read, delete: if isSignedIn();
       allow create, update: if isSignedIn() && isValidMapDoc(request.resource.data);
     }
+
+    match /massgames/{gameId} {
+      allow read, delete: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidMapDoc(request.resource.data);
+    }
   }
 }

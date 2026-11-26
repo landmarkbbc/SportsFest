@@ -1,4 +1,4 @@
-import { ArrowRight, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, X } from 'lucide-react';
 import { DEPARTMENTS } from '../types/models';
 import {
   BulkAssignmentPlan,
@@ -59,6 +59,19 @@ export function BulkAssignPreviewModal({
           <div className="p-3 rounded-xl bg-nested border border-edge text-xs text-fg-muted">
             Nothing is saved yet. Review the proposed teams and game balance below, then tap Confirm Assignments.
           </div>
+
+          {plan.unresolvedSeparations.length > 0 && (
+            <div className="p-3 rounded-xl border border-status-amber-edge bg-status-amber-bg text-status-amber-fg text-xs font-medium space-y-1">
+              {plan.unresolvedSeparations.map((u) => (
+                <div key={u.id} className="flex items-center gap-2">
+                  <AlertTriangle size={14} className="shrink-0" />
+                  <span>
+                    Could not separate {u.aName} and {u.bName}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Proposed Blue & Red Lists */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -176,6 +189,30 @@ export function BulkAssignPreviewModal({
               })}
             </div>
           </div>
+
+          {/* Church (after proposed assignment) */}
+          {plan.churchAfter.length > 0 && (
+            <div className="p-3 rounded-xl border border-edge bg-nested space-y-2">
+              <p className="text-xs font-semibold text-fg">
+                Church (after assignment)
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {plan.churchAfter.map((c) => (
+                  <div
+                    key={c.key || '__main__'}
+                    className="px-2.5 py-1.5 rounded-lg bg-surface border border-edge text-xs"
+                  >
+                    <p className="text-fg-muted font-medium truncate">{c.label}</p>
+                    <p className="tabular-nums mt-0.5">
+                      <span className="text-blue-light font-semibold">{c.blue}</span>
+                      <span className="text-fg-muted"> vs </span>
+                      <span className="text-red-light font-semibold">{c.red}</span>
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Before / After Game Balance */}
           <div>

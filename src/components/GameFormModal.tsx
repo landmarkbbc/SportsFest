@@ -6,17 +6,20 @@ import {
   Game,
   GameSession,
   GameType,
+  MassGameDoc,
   SportIconKey,
 } from '../types/models';
 import { GameInput } from '../services/db';
 import { SportIconPicker } from './SportIcons';
+import { ConfirmDialog } from './TeamBadge';
 
 interface GameFormModalProps {
   open: boolean;
   editingGame: Game | null;
+  editingMassDoc?: MassGameDoc | null;
   existingGames: Game[];
   onClose: () => void;
-  onSave: (input: GameInput) => Promise<void>;
+  onSave: (input: GameInput, massGameCount?: number) => Promise<void>;
   onRequestDelete?: (game: Game) => void;
   onShowToast: (type: 'success' | 'error', text: string) => void;
 }
@@ -65,6 +68,7 @@ function ToggleSwitch({
 export function GameFormModal({
   open,
   editingGame,
+  editingMassDoc,
   existingGames,
   onClose,
   onSave,
@@ -80,8 +84,15 @@ export function GameFormModal({
   const [hasDivisions, setHasDivisions] = useState(false);
   const [allowsDraw, setAllowsDraw] = useState(false);
   const [minPlayersInput, setMinPlayersInput] = useState('');
+  const [massCountInput, setMassCountInput] = useState('1');
   const [head, setHead] = useState('');
   const [saving, setSaving] = useState(false);
+  const [pendingShrinkConfirm, setPendingShrinkConfirm] = useState<{
+    input: GameInput;
+    count: number;
+    removedCount: number;
+    decidedCount: number;
+  } | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -99,6 +110,11 @@ export function GameFormModal({
           ? String(editingGame.minPlayersPerTeam)
           : ''
       );
+      setMassCountInput(
+        editingGame.type === 'mass'
+          ? String(Math.max(1, editingMassDoc?.items.length ?? 1))
+          : '1'
+      );
       setHead(editingGame.head ?? '');
     } else {
       setName('');
@@ -110,13 +126,16 @@ export function GameFormModal({
       setHasDivisions(false);
       setAllowsDraw(false);
       setMinPlayersInput('');
+      setMassCountInput('1');
       setHead('');
     }
+    setPendingShrinkConfirm(null);
     setSaving(false);
-  }, [open, editingGame]);
+  }, [open, editingGame, editingMassDoc]);
 
   if (!open) return null;
 
+  const isMass = type === 'mass';
   const collapsedName = name.trim().replace(/\s+/g, ' ');
   const normalizedName = collapsedName.toLowerCase();
   const isDuplicateName =
@@ -128,6 +147,7 @@ export function GameFormModal({
     );
 
   function handleTypeChange(nextType: GameType) {
+    const prevType = type;
     setType(nextType);
     if (nextType !== 'individual') {
       setHasDivisions(false);
@@ -135,6 +155,16 @@ export function GameFormModal({
     }
     if (nextType !== 'team') {
       setMinPlayersInput('');
+    }
+    if (nextType === 'mass') {
+      if (!editingGame || (prevType !== 'mass' && iconKey === null)) {
+        setIconKey('users');
+      }
+      if (!massCountInput.trim()) {
+        setMassCountInput('1');
+      }
+    } else if (prevType === 'mass' && !editingGame && iconKey === 'users') {
+      setIconKey(null);
     }
   }
 
@@ -152,6 +182,17 @@ export function GameFormModal({
     }
   }
 
+  async function executeSave(input: GameInput, massGameCount?: number) {
+    setSaving(true);
+    try {
+      await onSave(input, massGameCount);
+      setPendingShrinkConfirm(null);
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const cleanName = name.trim();
@@ -160,6 +201,52 @@ export function GameFormModal({
       return;
     }
     if (isDuplicateName) {
+      return;
+    }
+
+    const cleanHead = head.trim().slice(0, 40);
+
+    if (isMass) {
+      const parsedCount = Number(massCountInput.trim());
+      if (
+        !massCountInput.trim() ||
+        !Number.isInteger(parsedCount) ||
+        parsedCount < 1 ||
+        parsedCount > 20
+      ) {
+        onShowToast('error', 'Number of games must be between 1 and 20.');
+        return;
+      }
+
+      const payload: GameInput = {
+        name: cleanName,
+        type: 'mass',
+        eligibility: 'everyone',
+        session: 'morning',
+        iconKey,
+        usesSkillLevel: false,
+        hasDivisions: false,
+        minPlayersPerTeam: null,
+        allowsDraw: false,
+        head: cleanHead || null,
+      };
+
+      const existingItems = editingGame?.type === 'mass' ? (editingMassDoc?.items ?? []) : [];
+      if (editingGame && parsedCount < existingItems.length) {
+        const removed = existingItems.slice(parsedCount);
+        const decidedCount = removed.filter((item) => item.winner !== null).length;
+        if (decidedCount > 0) {
+          setPendingShrinkConfirm({
+            input: payload,
+            count: parsedCount,
+            removedCount: removed.length,
+            decidedCount,
+          });
+          return;
+        }
+      }
+
+      await executeSave(payload, parsedCount);
       return;
     }
 
@@ -173,29 +260,22 @@ export function GameFormModal({
       minPlayersPerTeam = parsed;
     }
 
-    setSaving(true);
-    try {
-      const effectiveUsesSkill = type === 'individual' && hasDivisions ? true : usesSkillLevel;
-      const effectiveHasDivisions =
-        type === 'individual' && effectiveUsesSkill ? hasDivisions : false;
-      const cleanHead = head.trim().slice(0, 40);
+    const effectiveUsesSkill = type === 'individual' && hasDivisions ? true : usesSkillLevel;
+    const effectiveHasDivisions =
+      type === 'individual' && effectiveUsesSkill ? hasDivisions : false;
 
-      await onSave({
-        name: cleanName,
-        type,
-        eligibility,
-        session,
-        iconKey,
-        usesSkillLevel: effectiveUsesSkill,
-        hasDivisions: effectiveHasDivisions,
-        minPlayersPerTeam,
-        allowsDraw: type === 'individual' ? allowsDraw : false,
-        head: cleanHead || null,
-      });
-      onClose();
-    } finally {
-      setSaving(false);
-    }
+    await executeSave({
+      name: cleanName,
+      type,
+      eligibility,
+      session,
+      iconKey,
+      usesSkillLevel: effectiveUsesSkill,
+      hasDivisions: effectiveHasDivisions,
+      minPlayersPerTeam,
+      allowsDraw: type === 'individual' ? allowsDraw : false,
+      head: cleanHead || null,
+    });
   }
 
   return (
@@ -244,7 +324,7 @@ export function GameFormModal({
               value={name}
               maxLength={80}
               onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Chess, Volleyball - Men"
+              placeholder={isMass ? 'e.g. Mass Active Games' : 'e.g. Chess, Volleyball - Men'}
               aria-invalid={isDuplicateName}
               className={`w-full min-h-[44px] px-3 py-2 rounded-xl border bg-nested text-sm text-fg placeholder:text-fg-muted focus:outline-none focus:ring-2 ${
                 isDuplicateName
@@ -277,7 +357,7 @@ export function GameFormModal({
             />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className={`grid grid-cols-1 ${isMass ? '' : 'sm:grid-cols-2'} gap-3`}>
             <div>
               <label
                 htmlFor="game-type-select"
@@ -294,112 +374,145 @@ export function GameFormModal({
                 <option value="individual">Individual</option>
                 <option value="pairs">Pairs</option>
                 <option value="team">Team</option>
+                <option value="mass">Mass game</option>
               </select>
             </div>
 
-            <div>
-              <label
-                htmlFor="game-eligibility-select"
-                className="block text-sm font-medium text-fg mb-1.5"
-              >
-                Eligibility
-              </label>
-              <select
-                id="game-eligibility-select"
-                value={eligibility}
-                onChange={(e) => setEligibility(e.target.value as Eligibility)}
-                className="w-full min-h-[44px] px-3 py-2 rounded-xl border border-edge bg-nested text-sm text-fg"
-              >
-                <option value="everyone">Everyone</option>
-                <option value="men">Men only</option>
-                <option value="women">Women only</option>
-              </select>
-            </div>
-          </div>
-
-          <div>
-            <span className="block text-sm font-medium text-fg mb-1.5">
-              Session
-            </span>
-            <div className="grid grid-cols-2 gap-1 p-1 bg-nested border border-edge rounded-xl">
-              {(['morning', 'afternoon'] as GameSession[]).map((sess) => {
-                const active = session === sess;
-                return (
-                  <button
-                    key={sess}
-                    type="button"
-                    onClick={() => setSession(sess)}
-                    className={`min-h-[44px] px-3 rounded-lg text-xs font-medium transition-colors duration-150 ${
-                      active
-                        ? 'bg-primary text-primary-fg'
-                        : 'text-fg-muted hover:text-fg'
-                    }`}
-                  >
-                    {GAME_SESSION_LABELS[sess]}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Skill Level, Divisions, and Min Players */}
-          <div className="p-3.5 rounded-xl border border-edge bg-nested divide-y divide-edge">
-            <ToggleSwitch
-              id="game-uses-skill-level"
-              label="Use skill levels"
-              description="Track Beginner / Intermediate / Advanced ratings for balancing and brackets."
-              checked={usesSkillLevel}
-              onChange={handleUsesSkillLevelChange}
-            />
-
-            {type === 'individual' && usesSkillLevel && (
-              <ToggleSwitch
-                id="game-has-divisions"
-                label="Divisions by skill level"
-                description="Separate L1, L2, and L3 brackets so players compete within their division."
-                checked={hasDivisions}
-                onChange={handleHasDivisionsChange}
-              />
-            )}
-
-            {type === 'individual' && (
-              <ToggleSwitch
-                id="game-allows-draw"
-                label="Allow draws"
-                description="Allow matches to be recorded as a draw."
-                checked={allowsDraw}
-                onChange={setAllowsDraw}
-              />
-            )}
-
-            {type === 'team' && (
-              <div className="pt-3 pb-1">
+            {!isMass && (
+              <div>
                 <label
-                  htmlFor="game-min-players"
-                  className="block text-sm font-medium text-fg mb-1"
+                  htmlFor="game-eligibility-select"
+                  className="block text-sm font-medium text-fg mb-1.5"
                 >
-                  Minimum players per team
+                  Eligibility
                 </label>
-                <p className="text-xs text-fg-muted mb-2">
-                  Optional. Blocks starting the match until both teams reach this count.
-                </p>
-                <input
-                  id="game-min-players"
-                  type="number"
-                  inputMode="numeric"
-                  min={1}
-                  max={99}
-                  value={minPlayersInput}
-                  onChange={(e) => setMinPlayersInput(e.target.value)}
-                  placeholder="Optional (e.g. 5)"
-                  className="w-full sm:w-44 min-h-[44px] px-3 py-2 rounded-xl border border-edge bg-surface text-sm text-fg placeholder:text-fg-muted tabular-nums focus:outline-none focus:ring-2 focus:ring-fg"
-                />
+                <select
+                  id="game-eligibility-select"
+                  value={eligibility}
+                  onChange={(e) => setEligibility(e.target.value as Eligibility)}
+                  className="w-full min-h-[44px] px-3 py-2 rounded-xl border border-edge bg-nested text-sm text-fg"
+                >
+                  <option value="everyone">Everyone</option>
+                  <option value="men">Men only</option>
+                  <option value="women">Women only</option>
+                </select>
               </div>
             )}
           </div>
 
+          {isMass ? (
+            <div>
+              <label
+                htmlFor="mass-games-count-input"
+                className="block text-sm font-medium text-fg mb-1.5"
+              >
+                Number of games
+              </label>
+              <input
+                id="mass-games-count-input"
+                type="number"
+                inputMode="numeric"
+                required
+                min={1}
+                max={20}
+                value={massCountInput}
+                onChange={(e) => setMassCountInput(e.target.value)}
+                placeholder="1-20"
+                className="w-full sm:w-44 min-h-[44px] px-3 py-2 rounded-xl border border-edge bg-nested text-sm text-fg placeholder:text-fg-muted tabular-nums focus:outline-none focus:ring-2 focus:ring-fg"
+              />
+              <p className="text-xs text-fg-muted mt-1.5">
+                Between 1 and 20 games. Everyone plays automatically.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div>
+                <span className="block text-sm font-medium text-fg mb-1.5">
+                  Session
+                </span>
+                <div className="grid grid-cols-2 gap-1 p-1 bg-nested border border-edge rounded-xl">
+                  {(['morning', 'afternoon'] as GameSession[]).map((sess) => {
+                    const active = session === sess;
+                    return (
+                      <button
+                        key={sess}
+                        type="button"
+                        onClick={() => setSession(sess)}
+                        className={`min-h-[44px] px-3 rounded-lg text-xs font-medium transition-colors duration-150 ${
+                          active
+                            ? 'bg-primary text-primary-fg'
+                            : 'text-fg-muted hover:text-fg'
+                        }`}
+                      >
+                        {GAME_SESSION_LABELS[sess]}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Skill Level, Divisions, and Min Players */}
+              <div className="p-3.5 rounded-xl border border-edge bg-nested divide-y divide-edge">
+                <ToggleSwitch
+                  id="game-uses-skill-level"
+                  label="Use skill levels"
+                  description="Track Beginner / Intermediate / Advanced ratings for balancing and brackets."
+                  checked={usesSkillLevel}
+                  onChange={handleUsesSkillLevelChange}
+                />
+
+                {type === 'individual' && usesSkillLevel && (
+                  <ToggleSwitch
+                    id="game-has-divisions"
+                    label="Divisions by skill level"
+                    description="Separate L1, L2, and L3 brackets so players compete within their division."
+                    checked={hasDivisions}
+                    onChange={handleHasDivisionsChange}
+                  />
+                )}
+
+                {type === 'individual' && (
+                  <ToggleSwitch
+                    id="game-allows-draw"
+                    label="Allow draws"
+                    description="Allow matches to be recorded as a draw."
+                    checked={allowsDraw}
+                    onChange={setAllowsDraw}
+                  />
+                )}
+
+                {type === 'team' && (
+                  <div className="pt-3 pb-1">
+                    <label
+                      htmlFor="game-min-players"
+                      className="block text-sm font-medium text-fg mb-1"
+                    >
+                      Minimum players per team
+                    </label>
+                    <p className="text-xs text-fg-muted mb-2">
+                      Optional. Blocks starting the match until both teams reach this count.
+                    </p>
+                    <input
+                      id="game-min-players"
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      max={99}
+                      value={minPlayersInput}
+                      onChange={(e) => setMinPlayersInput(e.target.value)}
+                      placeholder="Optional (e.g. 5)"
+                      className="w-full sm:w-44 min-h-[44px] px-3 py-2 rounded-xl border border-edge bg-surface text-sm text-fg placeholder:text-fg-muted tabular-nums focus:outline-none focus:ring-2 focus:ring-fg"
+                    />
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
           <div>
-            <span className="block text-sm font-medium text-fg mb-1.5">Icon</span>
+            <span className="block text-sm font-medium text-fg mb-1.5">
+              {isMass ? 'Icon (optional)' : 'Icon'}
+            </span>
             <SportIconPicker value={iconKey} onChange={setIconKey} />
           </div>
         </form>
@@ -440,6 +553,28 @@ export function GameFormModal({
           </div>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={Boolean(pendingShrinkConfirm)}
+        title={
+          pendingShrinkConfirm
+            ? `Remove last ${pendingShrinkConfirm.removedCount} ${pendingShrinkConfirm.removedCount === 1 ? 'game' : 'games'}?`
+            : ''
+        }
+        description={
+          pendingShrinkConfirm
+            ? `${pendingShrinkConfirm.decidedCount} of the removed ${pendingShrinkConfirm.decidedCount === 1 ? 'game already has a winner' : 'games already have winners'}. Reducing to ${pendingShrinkConfirm.count} will permanently clear ${pendingShrinkConfirm.decidedCount === 1 ? 'that result' : 'those results'}.`
+            : ''
+        }
+        confirmLabel="Remove & Save"
+        onConfirm={() => {
+          if (pendingShrinkConfirm) {
+            void executeSave(pendingShrinkConfirm.input, pendingShrinkConfirm.count);
+          }
+        }}
+        onCancel={() => setPendingShrinkConfirm(null)}
+        busy={saving}
+      />
     </div>
   );
 }

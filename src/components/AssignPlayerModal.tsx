@@ -1,13 +1,14 @@
 import { useMemo, useState } from 'react';
 import { Sparkles, X } from 'lucide-react';
-import { Game, Player, TeamId } from '../types/models';
-import { previewSingleTeamHint } from '../utils/balance';
+import { Game, Player, SeparationPair, TeamId } from '../types/models';
+import { getSeparationConflictsForTeam, previewSingleTeamHint } from '../utils/balance';
 
 interface AssignPlayerModalProps {
   open: boolean;
   player: Player | null;
   players: Player[];
   games: Game[];
+  separations: SeparationPair[];
   onClose: () => void;
   onAssignChoice: (player: Player, choice: TeamId | 'auto') => Promise<void>;
 }
@@ -17,6 +18,7 @@ export function AssignPlayerModal({
   player,
   players,
   games,
+  separations,
   onClose,
   onAssignChoice,
 }: AssignPlayerModalProps) {
@@ -31,6 +33,16 @@ export function AssignPlayerModal({
     if (!player) return '';
     return previewSingleTeamHint(player, 'red', players, games);
   }, [player, players, games]);
+
+  const blueConflicts = useMemo(() => {
+    if (!player) return [];
+    return getSeparationConflictsForTeam(player.id, 'blue', players, separations);
+  }, [player, players, separations]);
+
+  const redConflicts = useMemo(() => {
+    if (!player) return [];
+    return getSeparationConflictsForTeam(player.id, 'red', players, separations);
+  }, [player, players, separations]);
 
   if (!open || !player) return null;
 
@@ -90,6 +102,11 @@ export function AssignPlayerModal({
               </span>
             </div>
             <p className="text-xs text-blue-light/85 mt-1 pl-4.5">{blueHint}</p>
+            {blueConflicts.map((partner) => (
+              <p key={partner.id} className="text-xs text-status-amber-fg font-medium mt-0.5 pl-4.5">
+                {partner.name} is on this team
+              </p>
+            ))}
           </button>
 
           {/* Red team button */}
@@ -106,6 +123,11 @@ export function AssignPlayerModal({
               </span>
             </div>
             <p className="text-xs text-red-light/85 mt-1 pl-4.5">{redHint}</p>
+            {redConflicts.map((partner) => (
+              <p key={partner.id} className="text-xs text-status-amber-fg font-medium mt-0.5 pl-4.5">
+                {partner.name} is on this team
+              </p>
+            ))}
           </button>
 
           {/* Automatic (balance) button */}

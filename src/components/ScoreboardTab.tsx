@@ -27,7 +27,7 @@ function StatusPill({ status }: { status: ScoreboardSportRow['status'] }) {
   }
   return (
     <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-status-gray-bg text-status-gray-fg border border-edge shrink-0">
-      No bracket
+      {status === 'no_results' ? 'No results' : 'No bracket'}
     </span>
   );
 }
@@ -209,6 +209,12 @@ export function ScoreboardTab({
                     />
                   </div>
                 </div>
+
+                {row.massWins && (
+                  <p className="text-xs text-fg-muted tabular-nums">
+                    Blue {row.massWins.blue} - Red {row.massWins.red} games won
+                  </p>
+                )}
 
                 <div className="flex items-center justify-between pt-2 border-t border-edge text-xs tabular-nums">
                   <span className="inline-flex items-center gap-1.5 font-semibold text-blue-light">

@@ -23,29 +23,37 @@ import {
   Player,
   PlayerEntry,
   Role,
+  SeparationPair,
   SportNavigationTarget,
   TeamId,
 } from './types/models';
 import {
   GameInput,
+  addChurchName,
   assignBulkTeams,
   assignPlayerTeam,
   createGame,
   createPlayer,
+  deleteChurchAndUpdatePlayers,
   deleteGameAndCleanupPlayers,
   deletePlayer,
   ensureAnonymousAuth,
+  renameChurchAndUpdatePlayers,
   resetAllTeamAssignments,
   saveInitialPins,
   saveProgram,
+  saveSeparations,
+  subscribeChurches,
   subscribeGames,
   subscribePairs,
   subscribePlayers,
   subscribeProgram,
+  subscribeSeparations,
   subscribeSettings,
   testFirestoreConnection,
   updateGame,
   updateGamePoints,
+  updateMassGameItemPoints,
   updatePins,
   updatePlayer,
 } from './services/db';
@@ -139,6 +147,8 @@ export default function App() {
   );
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [program, setProgram] = useState<EventProgram | null>(null);
+  const [separations, setSeparations] = useState<SeparationPair[]>([]);
+  const [churches, setChurches] = useState<string[]>([]);
   const [programOpen, setProgramOpen] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [settingsExists, setSettingsExists] = useState(true);
@@ -329,12 +339,32 @@ export default function App() {
       }
     );
 
+    const unsubSeparations = subscribeSeparations(
+      (data) => {
+        setSeparations(data);
+      },
+      (err) => {
+        showToast('error', `Keep apart sync error: ${err.message}`);
+      }
+    );
+
+    const unsubChurches = subscribeChurches(
+      (data) => {
+        setChurches(data);
+      },
+      (err) => {
+        showToast('error', `Churches sync error: ${err.message}`);
+      }
+    );
+
     return () => {
       unsubGames();
       unsubPlayers();
       unsubSettings();
       unsubProgram();
       unsubPairs();
+      unsubSeparations();
+      unsubChurches();
     };
   }, [authReady, showToast]);
 
@@ -345,14 +375,25 @@ export default function App() {
     [showToast]
   );
 
-  const { bracketsByGameId, bracketsLoaded, scoreboard } = useBracketsAndScoreboard(
+  const {
+    bracketsByGameId,
+    bracketsLoaded,
+    massGamesByGameId,
+    massGamesLoaded,
+    scoreboard,
+  } = useBracketsAndScoreboard(
     authReady,
     games,
     handleBracketsSyncError
   );
 
   const initialLoading =
-    !authReady || !gamesLoaded || !playersLoaded || !settingsLoaded || !bracketsLoaded;
+    !authReady ||
+    !gamesLoaded ||
+    !playersLoaded ||
+    !settingsLoaded ||
+    !bracketsLoaded ||
+    !massGamesLoaded;
   const isSynced = isOnline && !playersFromCache;
   const showInitialPinSetup = authReady && settingsLoaded && !settingsExists;
 
@@ -393,9 +434,51 @@ export default function App() {
     showToast('success', 'Program saved.');
   }
 
-  async function handleCreateGame(input: GameInput): Promise<Game> {
+  async function handleSaveSeparations(nextPairs: SeparationPair[]) {
     try {
-      const created = await createGame(input);
+      await saveSeparations(nextPairs);
+    } catch (err) {
+      showToast('error', err instanceof Error ? err.message : 'Failed to save keep apart rules.');
+      throw err;
+    }
+  }
+
+  async function handleAddChurch(name: string): Promise<string> {
+    try {
+      const added = await addChurchName(name);
+      showToast('success', `Added church "${added}".`);
+      return added;
+    } catch (err) {
+      showToast('error', err instanceof Error ? err.message : 'Failed to add church.');
+      throw err;
+    }
+  }
+
+  async function handleRenameChurch(oldName: string, newName: string) {
+    if (role !== 'admin') return;
+    try {
+      await renameChurchAndUpdatePlayers(oldName, newName, churches, players);
+      showToast('success', `Renamed church to "${newName.trim()}".`);
+    } catch (err) {
+      showToast('error', err instanceof Error ? err.message : 'Failed to rename church.');
+      throw err;
+    }
+  }
+
+  async function handleDeleteChurch(name: string) {
+    if (role !== 'admin') return;
+    try {
+      await deleteChurchAndUpdatePlayers(name, churches, players);
+      showToast('success', `Deleted church "${name}".`);
+    } catch (err) {
+      showToast('error', err instanceof Error ? err.message : 'Failed to delete church.');
+      throw err;
+    }
+  }
+
+  async function handleCreateGame(input: GameInput, massGameCount?: number): Promise<Game> {
+    try {
+      const created = await createGame(input, massGameCount);
       showToast('success', `Added game "${created.name}".`);
       return created;
     } catch (err) {
@@ -404,9 +487,13 @@ export default function App() {
     }
   }
 
-  async function handleUpdateGame(gameId: string, input: GameInput) {
+  async function handleUpdateGame(
+    gameId: string,
+    input: GameInput,
+    massGameCount?: number
+  ) {
     try {
-      await updateGame(gameId, input);
+      await updateGame(gameId, input, massGameCount);
       showToast('success', `Updated "${input.name}".`);
     } catch (err) {
       showToast('error', err instanceof Error ? err.message : 'Failed to update game.');
@@ -426,9 +513,27 @@ export default function App() {
     }
   }
 
+  async function handleUpdateMassGameItemPoints(
+    gameId: string,
+    itemId: string,
+    points: number
+  ) {
+    if (role !== 'admin') return;
+    try {
+      await updateMassGameItemPoints(gameId, itemId, points);
+    } catch (err) {
+      showToast('error', err instanceof Error ? err.message : 'Failed to update points.');
+    }
+  }
+
   async function handleDeleteGame(gameId: string) {
     try {
-      const cleanedCount = await deleteGameAndCleanupPlayers(gameId, players);
+      const target = games.find((g) => g.id === gameId);
+      const cleanedCount = await deleteGameAndCleanupPlayers(
+        gameId,
+        players,
+        target?.type === 'mass'
+      );
       showToast(
         'success',
         cleanedCount > 0
@@ -444,6 +549,7 @@ export default function App() {
     name: string;
     department: Department;
     gender: Gender;
+    church: string;
     entries: PlayerEntry[];
     isWalkIn: boolean;
     walkInChoice: WalkInTeamChoice;
@@ -457,6 +563,7 @@ export default function App() {
           name: payload.name,
           department: payload.department,
           gender: payload.gender,
+          church: payload.church,
           entries: payload.entries,
           isWalkIn: payload.isWalkIn,
           team: nextTeam,
@@ -473,6 +580,7 @@ export default function App() {
           name: payload.name,
           department: payload.department,
           gender: payload.gender,
+          church: payload.church,
           entries: payload.entries,
           team: null,
           isWalkIn: true,
@@ -482,13 +590,20 @@ export default function App() {
 
         const plan =
           payload.walkInChoice === 'auto'
-            ? planSingleAssignment(tempPlayer, players, games)
-            : buildManualSingleAssignmentResult(tempPlayer, payload.walkInChoice, players, games);
+            ? planSingleAssignment(tempPlayer, players, games, Math.random, separations)
+            : buildManualSingleAssignmentResult(
+                tempPlayer,
+                payload.walkInChoice,
+                players,
+                games,
+                separations
+              );
 
         const created = await createPlayer({
           name: payload.name,
           department: payload.department,
           gender: payload.gender,
+          church: payload.church,
           entries: payload.entries,
           team: plan.team,
           isWalkIn: true,
@@ -503,6 +618,7 @@ export default function App() {
           name: payload.name,
           department: payload.department,
           gender: payload.gender,
+          church: payload.church,
           entries: payload.entries,
           team: null,
           isWalkIn: payload.isWalkIn,
@@ -531,8 +647,8 @@ export default function App() {
     try {
       const plan =
         choice === 'auto'
-          ? planSingleAssignment(player, players, games)
-          : buildManualSingleAssignmentResult(player, choice, players, games);
+          ? planSingleAssignment(player, players, games, Math.random, separations)
+          : buildManualSingleAssignmentResult(player, choice, players, games, separations);
 
       await assignPlayerTeam(player.id, plan.team);
       setAssignTargetPlayer(null);
@@ -545,7 +661,7 @@ export default function App() {
   }
 
   function handleOpenBulkAssignPreview() {
-    const plan = planBulkAssignment(players, games);
+    const plan = planBulkAssignment(players, games, separations);
     setBulkPlan(plan);
     setBulkPreviewOpen(true);
   }
@@ -556,9 +672,18 @@ export default function App() {
     try {
       await assignBulkTeams(bulkPlan.proposedTeamByPlayerId);
       const count = bulkPlan.proposedBlue.length + bulkPlan.proposedRed.length;
+      const unresolvedText =
+        bulkPlan.unresolvedSeparations.length > 0
+          ? bulkPlan.unresolvedSeparations
+              .map((u) => `Could not separate ${u.aName} and ${u.bName}`)
+              .join(' · ')
+          : undefined;
       setBulkPreviewOpen(false);
       setBulkPlan(null);
-      showToast('success', `Assigned ${count} players to Blue and Red teams.`);
+      showToast('success', `Assigned ${count} players to Blue and Red teams.`, {
+        warningText: unresolvedText,
+        durationMs: unresolvedText ? 5000 : undefined,
+      });
     } catch (err) {
       showToast('error', err instanceof Error ? err.message : 'Failed to save team assignments.');
     } finally {
@@ -568,7 +693,7 @@ export default function App() {
 
   function handleOpenRebalancePreview() {
     if (role !== 'admin') return;
-    const plan = planRebalance(players, games, bracketsByGameId, pairsByGameId);
+    const plan = planRebalance(players, games, bracketsByGameId, pairsByGameId, separations);
     setRebalancePlan(plan);
     setRebalancePreviewOpen(true);
   }
@@ -579,9 +704,18 @@ export default function App() {
     try {
       await assignBulkTeams(rebalancePlan.changesByPlayerId);
       const count = rebalancePlan.moves.length;
+      const unresolvedText =
+        rebalancePlan.unresolvedSeparations.length > 0
+          ? rebalancePlan.unresolvedSeparations
+              .map((u) => `Could not separate ${u.aName} and ${u.bName}`)
+              .join(' · ')
+          : undefined;
       setRebalancePreviewOpen(false);
       setRebalancePlan(null);
-      showToast('success', `${count} ${count === 1 ? 'player' : 'players'} moved`);
+      showToast('success', `${count} ${count === 1 ? 'player' : 'players'} moved`, {
+        warningText: unresolvedText,
+        durationMs: unresolvedText ? 5000 : undefined,
+      });
     } catch (err) {
       showToast('error', err instanceof Error ? err.message : 'Failed to re-balance teams.');
     } finally {
@@ -742,6 +876,7 @@ export default function App() {
               players={players}
               bracketsByGameId={bracketsByGameId}
               pairsByGameId={pairsByGameId}
+              massGamesByGameId={massGamesByGameId}
               role={role}
               initialDivision={sportNav.division ?? null}
               initialTab={sportNav.tab}
@@ -769,6 +904,7 @@ export default function App() {
                   loading={initialLoading}
                   games={games}
                   players={players}
+                  massGamesByGameId={massGamesByGameId}
                   onSelectGame={(game) => openSportPage({ gameId: game.id, fromTab: 'sports' })}
                 />
               )}
@@ -834,14 +970,21 @@ export default function App() {
               settings={settings}
               games={games}
               players={players}
+              massGamesByGameId={massGamesByGameId}
+              separations={separations}
+              churches={churches}
               onChangeRole={handleSetRole}
               onUpdatePins={handleUpdatePins}
-              onCreateGame={async (input) => {
-                await handleCreateGame(input);
+              onCreateGame={async (input, massGameCount) => {
+                await handleCreateGame(input, massGameCount);
               }}
               onUpdateGame={handleUpdateGame}
               onUpdateGamePoints={handleUpdateGamePoints}
+              onUpdateMassGameItemPoints={handleUpdateMassGameItemPoints}
               onDeleteGame={handleDeleteGame}
+              onSaveSeparations={handleSaveSeparations}
+              onRenameChurch={handleRenameChurch}
+              onDeleteChurch={handleDeleteChurch}
               onResetAllTeams={handleResetAllTeams}
               onShowToast={showToast}
             />
@@ -901,8 +1044,11 @@ export default function App() {
         role={role}
         games={games}
         lockedGameIds={lockedGameIds}
+        separations={separations}
+        churches={churches}
         onClose={() => setPlayerModalOpen(false)}
         onSavePlayer={handleSavePlayer}
+        onAddChurch={handleAddChurch}
         onDeletePlayer={handleDeletePlayer}
       />
 
@@ -911,6 +1057,7 @@ export default function App() {
         player={assignTargetPlayer}
         players={players}
         games={games}
+        separations={separations}
         onClose={() => setAssignTargetPlayer(null)}
         onAssignChoice={handleAssignSingleChoice}
       />

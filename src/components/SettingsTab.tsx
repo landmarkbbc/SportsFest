@@ -16,12 +16,17 @@ import {
   GAME_SESSION_LABELS,
   GAME_TYPE_LABELS,
   Game,
+  MassGameDoc,
+  MassGameItem,
   Player,
   Role,
+  SeparationPair,
 } from '../types/models';
 import { GameInput } from '../services/db';
 import { hashPin } from '../utils/crypto';
 import { GameFormModal } from './GameFormModal';
+import { ChurchesSection } from './ChurchesSection';
+import { SeparationsSection } from './SeparationsSection';
 import { SportIcon } from './SportIcons';
 import { ConfirmDialog } from './TeamBadge';
 
@@ -30,16 +35,27 @@ interface SettingsTabProps {
   settings: AppSettings | null;
   games: Game[];
   players: Player[];
+  massGamesByGameId: Map<string, MassGameDoc>;
+  separations: SeparationPair[];
+  churches: string[];
   onChangeRole: (role: Role) => void;
   onUpdatePins: (adminPinHash: string, scorerPinHash: string) => Promise<void>;
-  onCreateGame: (input: GameInput) => Promise<void>;
-  onUpdateGame: (gameId: string, input: GameInput) => Promise<void>;
+  onCreateGame: (input: GameInput, massGameCount?: number) => Promise<void>;
+  onUpdateGame: (gameId: string, input: GameInput, massGameCount?: number) => Promise<void>;
   onUpdateGamePoints: (
     gameId: string,
     pointsPerMatchWin: number,
     pointsChampion: number
   ) => Promise<void>;
+  onUpdateMassGameItemPoints: (
+    gameId: string,
+    itemId: string,
+    points: number
+  ) => Promise<void>;
   onDeleteGame: (gameId: string) => Promise<void>;
+  onSaveSeparations: (pairs: SeparationPair[]) => Promise<void>;
+  onRenameChurch: (oldName: string, newName: string) => Promise<void>;
+  onDeleteChurch: (name: string) => Promise<void>;
   onResetAllTeams: () => Promise<void>;
   onShowToast: (type: 'success' | 'error', text: string) => void;
 }
@@ -149,17 +165,92 @@ function PointsGameRow({
   );
 }
 
+function clampMassPoints(val: number): number {
+  if (!Number.isFinite(val)) return 0;
+  return Math.max(0, Math.min(99, Math.round(val * 10) / 10));
+}
+
+function MassItemPointsRow({
+  gameId,
+  item,
+  isAdmin,
+  onSaveItemPoints,
+}: {
+  gameId: string;
+  item: MassGameItem;
+  isAdmin: boolean;
+  onSaveItemPoints: (gameId: string, itemId: string, points: number) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState(String(item.points));
+
+  useEffect(() => {
+    setDraft(String(item.points));
+  }, [item.points]);
+
+  function handleChange(raw: string) {
+    if (!isAdmin) return;
+    setDraft(raw);
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed.endsWith('.')) return;
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 99) return;
+    const next = clampMassPoints(parsed);
+    if (next !== item.points) {
+      void onSaveItemPoints(gameId, item.id, next);
+    }
+  }
+
+  function handleBlur() {
+    if (!isAdmin) return;
+    const trimmed = draft.trim();
+    const parsed = trimmed === '' ? 0 : clampMassPoints(Number(trimmed));
+    setDraft(String(parsed));
+    if (parsed !== item.points) {
+      void onSaveItemPoints(gameId, item.id, parsed);
+    }
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-3 py-1">
+      <span className="text-xs sm:text-sm text-fg truncate">{item.name}</span>
+      <label className="flex items-center gap-1.5 text-xs text-fg-muted shrink-0">
+        <span>Points</span>
+        <input
+          type="number"
+          min={0}
+          max={99}
+          step="any"
+          inputMode="decimal"
+          disabled={!isAdmin}
+          value={draft}
+          onChange={(e) => handleChange(e.target.value)}
+          onBlur={handleBlur}
+          aria-label={`${item.name} points`}
+          className="w-16 min-h-[36px] px-2 py-1 rounded-lg border border-edge bg-nested text-sm text-fg text-center tabular-nums focus:outline-none focus:ring-2 focus:ring-fg disabled:opacity-65 disabled:cursor-not-allowed"
+        />
+      </label>
+    </div>
+  );
+}
+
 export function SettingsTab({
   role,
   settings,
   games,
   players,
+  massGamesByGameId,
+  separations,
+  churches,
   onChangeRole,
   onUpdatePins,
   onCreateGame,
   onUpdateGame,
   onUpdateGamePoints,
+  onUpdateMassGameItemPoints,
   onDeleteGame,
+  onSaveSeparations,
+  onRenameChurch,
+  onDeleteChurch,
   onResetAllTeams,
   onShowToast,
 }: SettingsTabProps) {
@@ -266,11 +357,11 @@ export function SettingsTab({
     setGameFormOpen(true);
   }
 
-  async function handleSaveGame(input: GameInput) {
+  async function handleSaveGame(input: GameInput, massGameCount?: number) {
     if (editingGame) {
-      await onUpdateGame(editingGame.id, input);
+      await onUpdateGame(editingGame.id, input, massGameCount);
     } else {
-      await onCreateGame(input);
+      await onCreateGame(input, massGameCount);
     }
     setGameFormOpen(false);
     setEditingGame(null);
@@ -459,14 +550,41 @@ export function SettingsTab({
                 : 'Admin only. Scorer and Viewer cannot edit.'}
             </p>
             <div className="divide-y divide-edge">
-              {games.map((game) => (
-                <PointsGameRow
-                  key={game.id}
-                  game={game}
-                  isAdmin={isAdmin}
-                  onSavePoints={onUpdateGamePoints}
-                />
-              ))}
+              {games.map((game) => {
+                if (game.type === 'mass') {
+                  const items = massGamesByGameId.get(game.id)?.items ?? [];
+                  return (
+                    <div key={game.id} className="py-2.5 first:pt-0 last:pb-0 space-y-2">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        {game.iconKey && (
+                          <SportIcon iconKey={game.iconKey} size={18} className="text-fg" />
+                        )}
+                        <span className="text-sm font-medium text-fg truncate">{game.name}</span>
+                      </div>
+                      <div className="pl-4 sm:pl-6 divide-y divide-edge/50">
+                        {items.map((item) => (
+                          <MassItemPointsRow
+                            key={item.id}
+                            gameId={game.id}
+                            item={item}
+                            isAdmin={isAdmin}
+                            onSaveItemPoints={onUpdateMassGameItemPoints}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <PointsGameRow
+                    key={game.id}
+                    game={game}
+                    isAdmin={isAdmin}
+                    onSavePoints={onUpdateGamePoints}
+                  />
+                );
+              })}
             </div>
           </div>
         )}
@@ -523,11 +641,20 @@ export function SettingsTab({
                       )}
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-fg truncate">{game.name}</p>
-                        <p className="text-xs text-fg-muted tabular-nums">
-                          {GAME_TYPE_LABELS[game.type]} · {ELIGIBILITY_LABELS[game.eligibility]} ·{' '}
-                          {GAME_SESSION_LABELS[game.session]} · {pCount}{' '}
-                          {pCount === 1 ? 'player' : 'players'}
-                        </p>
+                        {game.type === 'mass' ? (
+                          <p className="text-xs text-fg-muted tabular-nums">
+                            Mass game · {massGamesByGameId.get(game.id)?.items.length ?? 0}{' '}
+                            {(massGamesByGameId.get(game.id)?.items.length ?? 0) === 1
+                              ? 'game'
+                              : 'games'}
+                          </p>
+                        ) : (
+                          <p className="text-xs text-fg-muted tabular-nums">
+                            {GAME_TYPE_LABELS[game.type]} · {ELIGIBILITY_LABELS[game.eligibility]} ·{' '}
+                            {GAME_SESSION_LABELS[game.session]} · {pCount}{' '}
+                            {pCount === 1 ? 'player' : 'players'}
+                          </p>
+                        )}
                       </div>
                     </div>
 
@@ -558,6 +685,23 @@ export function SettingsTab({
           </div>
         )}
       </section>
+
+      {/* Keep apart (Collapsed by default, Admin only to edit) */}
+      <SeparationsSection
+        isAdmin={isAdmin}
+        players={players}
+        pairs={separations}
+        onSaveSeparations={onSaveSeparations}
+      />
+
+      {/* Churches (Collapsed by default, Admin only to edit) */}
+      <ChurchesSection
+        isAdmin={isAdmin}
+        churches={churches}
+        players={players}
+        onRenameChurch={onRenameChurch}
+        onDeleteChurch={onDeleteChurch}
+      />
 
       {/* Data Tools Card (Very bottom of Settings) */}
       <section className="lg:col-span-2 bg-surface border border-edge rounded-xl p-4 sm:p-5 space-y-4">
@@ -594,6 +738,7 @@ export function SettingsTab({
       <GameFormModal
         open={isAdmin && gameFormOpen}
         editingGame={editingGame}
+        editingMassDoc={editingGame ? massGamesByGameId.get(editingGame.id) ?? null : null}
         existingGames={games}
         onClose={() => {
           setGameFormOpen(false);
@@ -610,7 +755,9 @@ export function SettingsTab({
         title="Delete Game"
         description={
           deleteTargetGame
-            ? `Delete ${deleteTargetGame.name}? It will be removed from ${deleteTargetPlayerCount} player(s). This cannot be undone.`
+            ? deleteTargetGame.type === 'mass'
+              ? `Delete ${deleteTargetGame.name}? All inner games and results will be removed. This cannot be undone.`
+              : `Delete ${deleteTargetGame.name}? It will be removed from ${deleteTargetPlayerCount} player(s). This cannot be undone.`
             : ''
         }
         confirmLabel="Delete Game"

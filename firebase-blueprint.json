@@ -18,7 +18,7 @@
         },
         "type": {
           "type": "string",
-          "enum": ["individual", "pairs", "team"]
+          "enum": ["individual", "pairs", "team", "mass"]
         },
         "eligibility": {
           "type": "string",
@@ -118,6 +118,11 @@
           "type": "string",
           "enum": ["M", "F"]
         },
+        "church": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "Optional church name; empty or missing means Main church."
+        },
         "entries": {
           "type": "array",
           "description": "0 to 4 game entries (morning, afternoon, secondary, tertiary)."
@@ -199,6 +204,47 @@
       },
       "required": ["pairs", "unpaired"]
     },
+    "MassGameItem": {
+      "title": "MassGameItem",
+      "description": "A single inner game within a mass game.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "winner": {
+          "type": "string",
+          "description": "Winning team ('blue' | 'red') or null."
+        },
+        "points": {
+          "type": "number",
+          "description": "Points awarded to the winning team (default 1)."
+        }
+      },
+      "required": ["id", "name", "winner", "points"]
+    },
+    "MassGameDoc": {
+      "title": "MassGameDoc",
+      "description": "Inner games and winners for a mass game.",
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "description": "Ordered list of inner games (1-20)."
+        },
+        "updatedAt": {
+          "type": "integer"
+        }
+      },
+      "required": ["items"]
+    },
     "AppSettings": {
       "title": "AppSettings",
       "description": "Device-shared PIN hashes for Scorer and Admin roles.",
@@ -272,6 +318,59 @@
         }
       },
       "required": ["rows", "endTime"]
+    },
+    "SeparationPair": {
+      "title": "SeparationPair",
+      "description": "A keep-apart rule pairing two player IDs.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "aId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "bId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": ["id", "aId", "bId"]
+    },
+    "SeparationsDoc": {
+      "title": "SeparationsDoc",
+      "description": "Keep-apart player rules stored in settings/separations.",
+      "type": "object",
+      "properties": {
+        "pairs": {
+          "type": "array",
+          "description": "List of keep-apart pairs { id, aId, bId }."
+        },
+        "updatedAt": {
+          "type": "integer"
+        }
+      },
+      "required": ["pairs"]
+    },
+    "ChurchesDoc": {
+      "title": "ChurchesDoc",
+      "description": "Custom church names stored in settings/churches.",
+      "type": "object",
+      "properties": {
+        "names": {
+          "type": "array",
+          "description": "Alphabetical list of church names."
+        },
+        "updatedAt": {
+          "type": "integer"
+        }
+      },
+      "required": ["names"]
     }
   },
   "firestore": {
@@ -291,9 +390,13 @@
       "schema": { "$ref": "#/entities/Bracket" },
       "description": "Match brackets and match outcomes keyed by game ID."
     },
+    "/massgames/{gameId}": {
+      "schema": { "$ref": "#/entities/MassGameDoc" },
+      "description": "Inner games, winners, and points for mass games keyed by game ID."
+    },
     "/settings/{settingId}": {
       "schema": { "$ref": "#/entities/AppSettings" },
-      "description": "Global application settings (app stores PIN hashes; program stores event schedule)."
+      "description": "Global application settings (app stores PIN hashes; program stores event schedule; separations stores keep-apart rules)."
     }
   }
 }
