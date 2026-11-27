@@ -15,6 +15,7 @@ import {
   SeparationPair,
   SkillLevel,
   TeamId,
+  isMainEntry,
 } from '../types/models';
 import {
   MoveGameBalanceDiff,
@@ -33,6 +34,7 @@ interface SlotDraft {
   gameId: string;
   selfLevel: SkillLevel;
   overrideLevel: SkillLevel | null;
+  admitted?: boolean;
 }
 
 type DraftBySlot = Record<EntrySlot, SlotDraft>;
@@ -66,6 +68,8 @@ function buildInitialDrafts(player: Player | null): DraftBySlot {
   const base: DraftBySlot = {
     morning: { gameId: '', selfLevel: 2, overrideLevel: null },
     afternoon: { gameId: '', selfLevel: 2, overrideLevel: null },
+    afternoon2: { gameId: '', selfLevel: 2, overrideLevel: null },
+    afternoon3: { gameId: '', selfLevel: 2, overrideLevel: null },
     secondary: { gameId: '', selfLevel: 2, overrideLevel: null },
     tertiary: { gameId: '', selfLevel: 2, overrideLevel: null },
   };
@@ -75,6 +79,7 @@ function buildInitialDrafts(player: Player | null): DraftBySlot {
       gameId: entry.gameId,
       selfLevel: entry.selfLevel,
       overrideLevel: entry.overrideLevel ?? null,
+      admitted: entry.admitted,
     };
   }
   return base;
@@ -83,7 +88,9 @@ function buildInitialDrafts(player: Player | null): DraftBySlot {
 function isGameEligibleForSlot(slot: EntrySlot, game: Game, gender: Gender): boolean {
   if (!isGenderEligibleForGame(gender, game)) return false;
   if (slot === 'morning') return game.session === 'morning';
-  if (slot === 'afternoon') return game.session === 'afternoon';
+  if (slot === 'afternoon' || slot === 'afternoon2' || slot === 'afternoon3') {
+    return game.session === 'afternoon';
+  }
   return true;
 }
 
@@ -322,11 +329,16 @@ export function PlayerFormModal({
     for (const { key } of ENTRY_SLOTS) {
       const d = drafts[key];
       if (!d.gameId) continue;
+      const keepAdmitted =
+        (key === 'secondary' || key === 'tertiary') &&
+        Boolean(d.admitted) &&
+        initialEntryGameIdBySlot.get(key) === d.gameId;
       entries.push({
         slot: key,
         gameId: d.gameId,
         selfLevel: d.selfLevel,
         overrideLevel: isAdmin ? d.overrideLevel : null,
+        ...(keepAdmitted ? { admitted: true } : {}),
       });
     }
     return entries;
@@ -403,7 +415,7 @@ export function PlayerFormModal({
       const seenLocked = new Set<string>();
       const lockedGameNames: string[] = [];
       for (const entry of player.entries) {
-        if (lockedGameIds.has(entry.gameId) && !seenLocked.has(entry.gameId)) {
+        if (isMainEntry(entry) && lockedGameIds.has(entry.gameId) && !seenLocked.has(entry.gameId)) {
           seenLocked.add(entry.gameId);
           lockedGameNames.push(gameById.get(entry.gameId)?.name ?? entry.gameId);
         }
@@ -541,7 +553,9 @@ export function PlayerFormModal({
                             <p className="text-sm font-medium text-fg">
                               {game?.name ?? 'Unknown game'}
                             </p>
-                            <p className="text-xs text-fg-muted">{slotLabel}</p>
+                            <p className="text-xs text-fg-muted">
+                              {entry.admitted ? `${slotLabel} · Admitted` : slotLabel}
+                            </p>
                           </div>
                         </div>
                         {game?.usesSkillLevel && (
@@ -858,7 +872,7 @@ export function PlayerFormModal({
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-[16px] font-semibold text-fg">Game Entries</h3>
-                <span className="text-xs text-fg-muted">Optional · up to 4</span>
+                <span className="text-xs text-fg-muted">Optional · up to 6</span>
               </div>
 
               {ENTRY_SLOTS.map(({ key, label }) => {

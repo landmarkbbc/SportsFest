@@ -8,6 +8,7 @@ import {
   GamePairs,
   Player,
   SkillLevel,
+  isMainEntry,
 } from '../types/models';
 import { getEffectiveLevel } from './balance';
 import { pairToBracketSnapshot } from './pairs';
@@ -95,7 +96,7 @@ export function getGameParticipantsSummary(
 
   for (const player of players) {
     const entry = player.entries.find((e) => e.gameId === gameId);
-    if (!entry) continue;
+    if (!entry || !isMainEntry(entry)) continue;
     const effLevel = getEffectiveLevel(entry);
     if (division !== null && effLevel !== division) {
       continue;

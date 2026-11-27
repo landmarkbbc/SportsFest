@@ -77,7 +77,7 @@
       "properties": {
         "slot": {
           "type": "string",
-          "enum": ["morning", "afternoon", "secondary", "tertiary"]
+          "enum": ["morning", "afternoon", "afternoon2", "afternoon3", "secondary", "tertiary"]
         },
         "gameId": {
           "type": "string",
@@ -90,13 +90,16 @@
         },
         "overrideLevel": {
           "type": "integer"
+        },
+        "admitted": {
+          "type": "boolean"
         }
       },
       "required": ["slot", "gameId", "selfLevel"]
     },
     "Player": {
       "title": "Player",
-      "description": "A church fellowship participant with 0 to 3 game entries and optional team assignment.",
+      "description": "A church fellowship participant with 0 to 6 game entries and optional team assignment.",
       "type": "object",
       "properties": {
         "id": {
@@ -125,7 +128,7 @@
         },
         "entries": {
           "type": "array",
-          "description": "0 to 4 game entries (morning, afternoon, secondary, tertiary)."
+          "description": "0 to 6 game entries (morning, afternoon, afternoon2, afternoon3, secondary, tertiary)."
         },
         "team": {
           "type": "string",

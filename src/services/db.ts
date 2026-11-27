@@ -852,12 +852,7 @@ export async function deleteGameAndCleanupPlayers(
         } else {
           const remainingEntries = op.player.entries
             .filter((e) => e.gameId !== gameId)
-            .map((e) => ({
-              slot: e.slot,
-              gameId: e.gameId,
-              selfLevel: e.selfLevel,
-              overrideLevel: e.overrideLevel ?? null,
-            }));
+            .map(sanitizePlayerEntry);
           batch.update(doc(db, 'players', op.player.id), {
             entries: remainingEntries,
             updatedAt: now,
@@ -873,17 +868,24 @@ export async function deleteGameAndCleanupPlayers(
 }
 
 // Players CRUD & Team Assignments
+function sanitizePlayerEntry(entry: PlayerEntry): PlayerEntry {
+  const isAdmittedSecondary =
+    (entry.slot === 'secondary' || entry.slot === 'tertiary') && entry.admitted === true;
+  return {
+    slot: entry.slot,
+    gameId: entry.gameId,
+    selfLevel: entry.selfLevel,
+    overrideLevel: entry.overrideLevel ?? null,
+    ...(isAdmittedSecondary ? { admitted: true } : {}),
+  };
+}
+
 export async function createPlayer(
   input: Omit<Player, 'id' | 'createdAt' | 'updatedAt'>
 ): Promise<Player> {
   const now = Date.now();
   const id = createId(input.isWalkIn ? 'walkin' : 'player');
-  const sanitizedEntries = input.entries.map((entry) => ({
-    slot: entry.slot,
-    gameId: entry.gameId,
-    selfLevel: entry.selfLevel,
-    overrideLevel: entry.overrideLevel ?? null,
-  }));
+  const sanitizedEntries = input.entries.map(sanitizePlayerEntry);
 
   const player: Player = {
     id,
@@ -913,12 +915,7 @@ export async function updatePlayer(
     team?: TeamId | null;
   }
 ): Promise<void> {
-  const sanitizedEntries = updates.entries.map((entry) => ({
-    slot: entry.slot,
-    gameId: entry.gameId,
-    selfLevel: entry.selfLevel,
-    overrideLevel: entry.overrideLevel ?? null,
-  }));
+  const sanitizedEntries = updates.entries.map(sanitizePlayerEntry);
 
   const payload: Record<string, unknown> = {
     name: updates.name.trim(),
@@ -1014,12 +1011,7 @@ export async function removePlayerGameEntry(
 
       const remaining = currentEntries
         .filter((e) => e.gameId !== gameId)
-        .map((e) => ({
-          slot: e.slot,
-          gameId: e.gameId,
-          selfLevel: e.selfLevel,
-          overrideLevel: e.overrideLevel ?? null,
-        }));
+        .map(sanitizePlayerEntry);
 
       let pairsUndo: PairsUndoState = { kind: 'none' };
 
@@ -1095,12 +1087,7 @@ export async function removePlayerGameEntry(
       });
 
       return {
-        entry: {
-          slot: removed.slot,
-          gameId: removed.gameId,
-          selfLevel: removed.selfLevel,
-          overrideLevel: removed.overrideLevel ?? null,
-        },
+        entry: sanitizePlayerEntry(removed),
         pairsUndo,
       };
     });
@@ -1137,18 +1124,8 @@ export async function restorePlayerGameEntry(
           throw new Error('That slot is now used by another sport.');
         }
         const nextEntries = [
-          ...currentEntries.map((e) => ({
-            slot: e.slot,
-            gameId: e.gameId,
-            selfLevel: e.selfLevel,
-            overrideLevel: e.overrideLevel ?? null,
-          })),
-          {
-            slot: entry.slot,
-            gameId: entry.gameId,
-            selfLevel: entry.selfLevel,
-            overrideLevel: entry.overrideLevel ?? null,
-          },
+          ...currentEntries.map(sanitizePlayerEntry),
+          sanitizePlayerEntry(entry),
         ];
         tx.update(playerRef, {
           entries: nextEntries,
@@ -1222,6 +1199,45 @@ export async function restorePlayerGameEntry(
       error instanceof Error &&
       (error.message === 'Player not found.' ||
         error.message === 'That slot is now used by another sport.')
+    ) {
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.UPDATE, `players/${playerId}`);
+  }
+}
+
+export async function setPlayerEntryAdmitted(
+  playerId: string,
+  gameId: string,
+  admitted: boolean
+): Promise<void> {
+  const playerRef = doc(db, 'players', playerId);
+  try {
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(playerRef);
+      if (!snap.exists()) {
+        throw new Error('Player not found.');
+      }
+      const data = snap.data() as Player;
+      const currentEntries = Array.isArray(data.entries) ? data.entries : [];
+      let found = false;
+      const nextEntries = currentEntries.map((e) => {
+        if (e.gameId !== gameId) return sanitizePlayerEntry(e);
+        found = true;
+        return sanitizePlayerEntry({ ...e, admitted });
+      });
+      if (!found) {
+        throw new Error('Player entry not found.');
+      }
+      tx.update(playerRef, {
+        entries: nextEntries,
+        updatedAt: Date.now(),
+      });
+    });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message === 'Player not found.' || error.message === 'Player entry not found.')
     ) {
       throw error;
     }

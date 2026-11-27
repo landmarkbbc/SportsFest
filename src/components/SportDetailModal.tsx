@@ -15,8 +15,13 @@ import {
   Role,
   SKILL_LEVEL_LABELS,
   SkillLevel,
+  isMainEntry,
 } from '../types/models';
-import { removePlayerGameEntry, restorePlayerGameEntry } from '../services/db';
+import {
+  removePlayerGameEntry,
+  restorePlayerGameEntry,
+  setPlayerEntryAdmitted,
+} from '../services/db';
 import {
   computeGameStats,
   getDisplayGameBalanceStatus,
@@ -240,9 +245,19 @@ export function SportDetailView({
         : a.player.name.localeCompare(b.player.name)
     );
 
-  const blueGroup = participants.filter((p) => p.player.team === 'blue');
-  const redGroup = participants.filter((p) => p.player.team === 'red');
-  const unassignedGroup = participants.filter((p) => p.player.team === null);
+  const mainParticipants = participants.filter((p) => isMainEntry(p.entry));
+  const backupParticipants = participants
+    .filter((p) => !isMainEntry(p.entry))
+    .slice()
+    .sort((a, b) => a.player.name.localeCompare(b.player.name));
+
+  const blueGroup = mainParticipants.filter((p) => p.player.team === 'blue');
+  const redGroup = mainParticipants.filter((p) => p.player.team === 'red');
+  const unassignedGroup = mainParticipants.filter((p) => p.player.team === null);
+
+  const backupBlue = backupParticipants.filter((p) => p.player.team === 'blue');
+  const backupRed = backupParticipants.filter((p) => p.player.team === 'red');
+  const backupUnassigned = backupParticipants.filter((p) => p.player.team === null);
 
   const divisionSummaries = useMemo(() => {
     if (!game.hasDivisions) return [];
@@ -407,11 +422,56 @@ export function SportDetailView({
     }
   }
 
+  async function handleSetAdmitted(admitted: boolean) {
+    if (!actionTarget || removing) return;
+    const { player } = actionTarget;
+    const hasBracketOrPairs = hasExistingBracket || pairsByGameId.has(game.id);
+    setRemoving(true);
+    try {
+      await setPlayerEntryAdmitted(player.id, game.id, admitted);
+      setActionTarget(null);
+      onShowToast(
+        'success',
+        admitted ? `Admitted to ${game.name}` : 'Moved back to backup',
+        {
+          durationMs: 5000,
+          warningText: hasBracketOrPairs ? 'Existing bracket not changed' : undefined,
+          action: {
+            label: 'Undo',
+            onClick: async () => {
+              try {
+                await setPlayerEntryAdmitted(player.id, game.id, !admitted);
+              } catch (err) {
+                onShowToast(
+                  'error',
+                  formatWriteError(
+                    err,
+                    admitted ? 'Could not move back to backup.' : 'Could not admit player.'
+                  )
+                );
+              }
+            },
+          },
+        }
+      );
+    } catch (err) {
+      onShowToast(
+        'error',
+        formatWriteError(
+          err,
+          admitted ? `Failed to admit to ${game.name}.` : 'Failed to move back to backup.'
+        )
+      );
+    } finally {
+      setRemoving(false);
+    }
+  }
+
   function handleRequestRemoveFromPopup() {
     if (!actionTarget) return;
     const { player, entry } = actionTarget;
     const inBracket = isPlayerInCurrentBracketOrPairs(player);
-    if (entry.slot === 'secondary' || entry.slot === 'tertiary') {
+    if (!isMainEntry(entry)) {
       void executeRemove(player, entry, inBracket, true);
     } else {
       setActionTarget(null);
@@ -458,7 +518,8 @@ export function SportDetailView({
             {GAME_TYPE_LABELS[game.type]} · {ELIGIBILITY_LABELS[game.eligibility]} ·{' '}
             {GAME_SESSION_LABELS[game.session]} ·{' '}
             <span className="tabular-nums">
-              {participants.length} {participants.length === 1 ? 'player' : 'players'}
+              {mainParticipants.length} {mainParticipants.length === 1 ? 'player' : 'players'}
+              {backupParticipants.length > 0 ? ` - ${backupParticipants.length} backup` : ''}
             </span>
           </p>
           {game.head && (
@@ -807,6 +868,76 @@ export function SportDetailView({
             )}
           </div>
 
+          {/* Backup players section */}
+          {backupParticipants.length > 0 && (
+            <div className="bg-surface border border-edge rounded-xl p-4 space-y-3">
+              <h3 className="text-sm font-semibold text-fg tabular-nums">
+                Backup players ({backupParticipants.length})
+              </h3>
+              <div className="grid grid-cols-2 gap-3 items-start">
+                <div className="bg-nested border border-edge rounded-xl p-3">
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <span className="w-2 h-2 rounded-full bg-blue-team" aria-hidden="true" />
+                    <span className="text-xs font-semibold text-blue-light">Blue</span>
+                  </div>
+                  {backupBlue.length === 0 ? (
+                    <p className="text-xs text-fg-muted">None</p>
+                  ) : (
+                    <ul>
+                      {backupBlue.map((item) => (
+                        <PlayerListRow
+                          key={item.player.id}
+                          item={item}
+                          showLevel={false}
+                          onTap={handleTapPlayer}
+                        />
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                <div className="bg-nested border border-edge rounded-xl p-3">
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <span className="w-2 h-2 rounded-full bg-red-team" aria-hidden="true" />
+                    <span className="text-xs font-semibold text-red-light">Red</span>
+                  </div>
+                  {backupRed.length === 0 ? (
+                    <p className="text-xs text-fg-muted">None</p>
+                  ) : (
+                    <ul>
+                      {backupRed.map((item) => (
+                        <PlayerListRow
+                          key={item.player.id}
+                          item={item}
+                          showLevel={false}
+                          onTap={handleTapPlayer}
+                        />
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+
+              {backupUnassigned.length > 0 && (
+                <div className="pt-2 border-t border-edge">
+                  <p className="text-xs font-medium text-fg-muted mb-1 tabular-nums">
+                    Unassigned ({backupUnassigned.length})
+                  </p>
+                  <ul>
+                    {backupUnassigned.map((item) => (
+                      <PlayerListRow
+                        key={item.player.id}
+                        item={item}
+                        showLevel={false}
+                        onTap={handleTapPlayer}
+                      />
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* e. Department Comparison at the very bottom */}
           <div className="bg-surface border border-edge rounded-xl overflow-hidden">
             <div className="px-4 py-2.5 bg-nested border-b border-edge">
@@ -874,6 +1005,27 @@ export function SportDetailView({
               >
                 Details
               </button>
+              {!isMainEntry(actionTarget.entry) ? (
+                <button
+                  type="button"
+                  disabled={removing}
+                  onClick={() => void handleSetAdmitted(true)}
+                  className="w-full min-h-[44px] px-4 py-2.5 rounded-xl border border-edge bg-transparent text-fg text-sm font-medium hover:bg-nested transition-colors duration-150 disabled:opacity-50"
+                >
+                  Admit to main group
+                </button>
+              ) : (actionTarget.entry.slot === 'secondary' ||
+                  actionTarget.entry.slot === 'tertiary') &&
+                actionTarget.entry.admitted === true ? (
+                <button
+                  type="button"
+                  disabled={removing}
+                  onClick={() => void handleSetAdmitted(false)}
+                  className="w-full min-h-[44px] px-4 py-2.5 rounded-xl border border-edge bg-transparent text-fg text-sm font-medium hover:bg-nested transition-colors duration-150 disabled:opacity-50"
+                >
+                  Move back to backup
+                </button>
+              ) : null}
               <button
                 type="button"
                 disabled={removing}
@@ -900,8 +1052,12 @@ export function SportDetailView({
               id="sport-player-remove-title"
               className="text-[16px] font-semibold text-fg leading-snug"
             >
-              {confirmRemoveTarget.player.name}&apos;s main {confirmRemoveTarget.entry.slot} game is{' '}
-              {game.name}. Remove them from it?
+              {confirmRemoveTarget.player.name}&apos;s main{' '}
+              {confirmRemoveTarget.entry.slot === 'afternoon2' ||
+              confirmRemoveTarget.entry.slot === 'afternoon3'
+                ? 'afternoon'
+                : confirmRemoveTarget.entry.slot}{' '}
+              game is {game.name}. Remove them from it?
             </h2>
 
             {confirmRemoveTarget.inBracket && (

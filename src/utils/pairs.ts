@@ -7,6 +7,7 @@ import {
   Player,
   SkillLevel,
   TeamId,
+  isMainEntry,
 } from '../types/models';
 import { getEffectiveLevel } from './balance';
 
@@ -50,7 +51,7 @@ export function buildInitialGamePairs(
     for (const player of players) {
       if (player.team !== team) continue;
       const entry = player.entries.find((e) => e.gameId === game.id);
-      if (!entry) continue;
+      if (!entry || !isMainEntry(entry)) continue;
       const level: SkillLevel = game.usesSkillLevel ? getEffectiveLevel(entry) : 2;
       members.push({
         playerId: player.id,
@@ -210,7 +211,7 @@ export function hasPairsRosterChanged(
   }
 
   const currentAssigned = players.filter(
-    (p) => p.team !== null && p.entries.some((e) => e.gameId === gameId)
+    (p) => p.team !== null && p.entries.some((e) => e.gameId === gameId && isMainEntry(e))
   );
   if (currentAssigned.length !== savedTeamById.size) return true;
   for (const p of currentAssigned) {

@@ -25,7 +25,13 @@ export type SportIconKey =
   | 'basketball'
   | 'volleyball';
 
-export type EntrySlot = 'morning' | 'afternoon' | 'secondary' | 'tertiary';
+export type EntrySlot =
+  | 'morning'
+  | 'afternoon'
+  | 'afternoon2'
+  | 'afternoon3'
+  | 'secondary'
+  | 'tertiary';
 
 export type SkillLevel = 1 | 2 | 3;
 
@@ -48,6 +54,17 @@ export interface PlayerEntry {
   gameId: string;
   selfLevel: SkillLevel;
   overrideLevel?: SkillLevel | null;
+  admitted?: boolean;
+}
+
+export function isMainEntry(entry: Pick<PlayerEntry, 'slot' | 'admitted'>): boolean {
+  return (
+    entry.slot === 'morning' ||
+    entry.slot === 'afternoon' ||
+    entry.slot === 'afternoon2' ||
+    entry.slot === 'afternoon3' ||
+    entry.admitted === true
+  );
 }
 
 export interface Game {
@@ -231,6 +248,8 @@ export const DEPARTMENTS: Department[] = ['Kids', 'YP', 'SP', 'Adults'];
 export const ENTRY_SLOTS: { key: EntrySlot; label: string }[] = [
   { key: 'morning', label: 'Morning game' },
   { key: 'afternoon', label: 'Afternoon game' },
+  { key: 'afternoon2', label: 'Afternoon game 2' },
+  { key: 'afternoon3', label: 'Afternoon game 3' },
   { key: 'secondary', label: 'Secondary game' },
   { key: 'tertiary', label: 'Tertiary game' },
 ];

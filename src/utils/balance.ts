@@ -12,6 +12,7 @@ import {
   SeparationPair,
   SkillLevel,
   TeamId,
+  isMainEntry,
 } from '../types/models';
 
 export const COST_WEIGHTS = {
@@ -139,11 +140,18 @@ export function getRegularEntries(
   });
 }
 
+export function getRegularMainEntries(
+  player: Pick<Player, 'entries'>,
+  gameById?: ReadonlyMap<string, Game>
+): PlayerEntry[] {
+  return getRegularEntries(player, gameById).filter(isMainEntry);
+}
+
 export function getPlayerTotalEffectiveLevel(
   player: Player,
   gameById?: ReadonlyMap<string, Game>
 ): number {
-  return getRegularEntries(player, gameById).reduce((sum, entry) => {
+  return getRegularMainEntries(player, gameById).reduce((sum, entry) => {
     const game = gameById?.get(entry.gameId);
     if (game && !game.usesSkillLevel) return sum;
     return sum + getEffectiveLevel(entry);
@@ -485,7 +493,7 @@ export function computeGameStats(
 
   for (const player of players) {
     const entry = player.entries.find((e) => e.gameId === gameId);
-    if (!entry) continue;
+    if (!entry || !isMainEntry(entry)) continue;
 
     const assignedTeam = player.team ?? proposedMap?.get(player.id) ?? null;
     if (!assignedTeam) {
@@ -575,7 +583,7 @@ export function computeTotalCost(
     }
 
     for (const entry of player.entries) {
-      if (gameById.get(entry.gameId)?.type === 'mass') continue;
+      if (!isMainEntry(entry) || gameById.get(entry.gameId)?.type === 'mass') continue;
       let bucket = gameMap.get(entry.gameId);
       if (!bucket) {
         bucket = createEmptyBucket();
@@ -673,7 +681,7 @@ function buildMutableState(
     }
 
     for (const entry of player.entries) {
-      if (gameById.get(entry.gameId)?.type === 'mass') continue;
+      if (!isMainEntry(entry) || gameById.get(entry.gameId)?.type === 'mass') continue;
       let bucket = buckets.get(entry.gameId);
       if (!bucket) {
         bucket = createEmptyBucket();
@@ -746,7 +754,7 @@ function applyPlayerToState(
   }
 
   for (const entry of player.entries) {
-    if (state.gameById.get(entry.gameId)?.type === 'mass') continue;
+    if (!isMainEntry(entry) || state.gameById.get(entry.gameId)?.type === 'mass') continue;
     let bucket = state.buckets.get(entry.gameId);
     if (!bucket) {
       bucket = createEmptyBucket();
@@ -829,10 +837,14 @@ function deltaCostForSwap(
 ): number {
   const touchedGames = new Set<string>();
   for (const e of pBlue.entries) {
-    if (state.gameById.get(e.gameId)?.type !== 'mass') touchedGames.add(e.gameId);
+    if (isMainEntry(e) && state.gameById.get(e.gameId)?.type !== 'mass') {
+      touchedGames.add(e.gameId);
+    }
   }
   for (const e of pRed.entries) {
-    if (state.gameById.get(e.gameId)?.type !== 'mass') touchedGames.add(e.gameId);
+    if (isMainEntry(e) && state.gameById.get(e.gameId)?.type !== 'mass') {
+      touchedGames.add(e.gameId);
+    }
   }
 
   let before =
@@ -980,14 +992,14 @@ export function planBulkAssignment(
   const unassigned = allPlayers.filter((p) => p.team === null);
 
   const withGames = unassigned
-    .filter((p) => getRegularEntries(p, gameById).length > 0)
+    .filter((p) => getRegularMainEntries(p, gameById).length > 0)
     .sort((a, b) => {
       const levelDiff =
         getPlayerTotalEffectiveLevel(b, gameById) -
         getPlayerTotalEffectiveLevel(a, gameById);
       if (levelDiff !== 0) return levelDiff;
       const entryDiff =
-        getRegularEntries(b, gameById).length - getRegularEntries(a, gameById).length;
+        getRegularMainEntries(b, gameById).length - getRegularMainEntries(a, gameById).length;
       if (entryDiff !== 0) return entryDiff;
       const ruleDiff = (rulePlayerIds.has(b.id) ? 1 : 0) - (rulePlayerIds.has(a.id) ? 1 : 0);
       if (ruleDiff !== 0) return ruleDiff;
@@ -996,7 +1008,7 @@ export function planBulkAssignment(
     });
 
   const noGames = unassigned
-    .filter((p) => getRegularEntries(p, gameById).length === 0)
+    .filter((p) => getRegularMainEntries(p, gameById).length === 0)
     .sort((a, b) => {
       const ruleDiff = (rulePlayerIds.has(b.id) ? 1 : 0) - (rulePlayerIds.has(a.id) ? 1 : 0);
       if (ruleDiff !== 0) return ruleDiff;
@@ -1243,6 +1255,7 @@ function buildJoinedGameBalances(
   const updatedList = [...existingPlayers, { ...targetPlayer, team: chosen }];
 
   return targetPlayer.entries
+    .filter(isMainEntry)
     .map((entry) => {
       const game = gameById.get(entry.gameId);
       if (!game || game.type === 'mass') return null;
@@ -1332,6 +1345,7 @@ export function previewMovePlayerGameBalances(
   const afterPlayers = [...others, { ...player, entries: updatedEntries, team: targetTeam }];
 
   return updatedEntries
+    .filter(isMainEntry)
     .map((entry) => {
       const game = gameById.get(entry.gameId);
       if (!game || game.type === 'mass') return null;
@@ -1402,6 +1416,7 @@ export function planSingleAssignment(
   let bestGapScore = -1;
 
   for (const entry of targetPlayer.entries) {
+    if (!isMainEntry(entry)) continue;
     const game = gameById.get(entry.gameId);
     if (game?.type === 'mass') continue;
     const b = state.buckets.get(entry.gameId);
@@ -1557,6 +1572,7 @@ function buildRebalanceMoveReason(
   }
 
   for (const entry of player.entries) {
+    if (!isMainEntry(entry)) continue;
     const g = gameById.get(entry.gameId);
     const st = gameBeforeStats.get(entry.gameId);
     if (!g || !st) continue;
@@ -1612,11 +1628,11 @@ export function planRebalance(
   const withGameUnlocked: (Player & { team: TeamId })[] = [];
 
   for (const p of assignedPlayers) {
-    const regularEntries = getRegularEntries(p, gameById);
-    const isLocked = regularEntries.some((e) => lockedGameIds.has(e.gameId));
+    const regularMainEntries = getRegularMainEntries(p, gameById);
+    const isLocked = regularMainEntries.some((e) => lockedGameIds.has(e.gameId));
     if (isLocked) {
       lockedCount += 1;
-    } else if (regularEntries.length === 0) {
+    } else if (regularMainEntries.length === 0) {
       noGameUnlocked.push(p);
     } else {
       withGameUnlocked.push(p);
@@ -1706,7 +1722,7 @@ export function planRebalance(
           fromTeam: cur,
           toTeam: next,
           improvement: baseCost - newCost,
-          noGameScore: getRegularEntries(p, gameById).length === 0 ? 2 : 0,
+          noGameScore: getRegularMainEntries(p, gameById).length === 0 ? 2 : 0,
           movedAfter,
         };
         if (isBetter(step)) best = step;
@@ -1730,8 +1746,8 @@ export function planRebalance(
             pRed,
             improvement: -delta,
             noGameScore:
-              (getRegularEntries(pBlue, gameById).length === 0 ? 1 : 0) +
-              (getRegularEntries(pRed, gameById).length === 0 ? 1 : 0),
+              (getRegularMainEntries(pBlue, gameById).length === 0 ? 1 : 0) +
+              (getRegularMainEntries(pRed, gameById).length === 0 ? 1 : 0),
             movedAfter,
           };
           if (isBetter(step)) best = step;
