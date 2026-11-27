@@ -1480,6 +1480,10 @@ export function planSingleAssignment(
   };
 }
 
+function isBackupBracket(docId: string, bracket: Bracket): boolean {
+  return docId.endsWith('__backup') || bracket.group === 'backup';
+}
+
 export function getLockedGameIds(
   bracketsByGameId: ReadonlyMap<string, Bracket>,
   pairsByGameId: ReadonlyMap<string, GamePairs>
@@ -1488,10 +1492,25 @@ export function getLockedGameIds(
   for (const gameId of pairsByGameId.keys()) {
     locked.add(gameId);
   }
-  for (const docId of bracketsByGameId.keys()) {
+  for (const [docId, bracket] of bracketsByGameId.entries()) {
+    if (isBackupBracket(docId, bracket)) continue;
     const divIdx = docId.lastIndexOf('__L');
     const gameId = divIdx > 0 ? docId.slice(0, divIdx) : docId;
     locked.add(gameId);
+  }
+  return locked;
+}
+
+export function getBackupBracketLockedPlayerIds(
+  bracketsByGameId: ReadonlyMap<string, Bracket>
+): Set<string> {
+  const locked = new Set<string>();
+  for (const [docId, bracket] of bracketsByGameId.entries()) {
+    if (!isBackupBracket(docId, bracket)) continue;
+    for (const m of bracket.matches) {
+      if (m.a?.playerId) locked.add(m.a.playerId);
+      if (m.b?.playerId) locked.add(m.b.playerId);
+    }
   }
   return locked;
 }
@@ -1618,6 +1637,7 @@ export function planRebalance(
   const gameById = new Map(games.map((g) => [g.id, g]));
   const playerById = new Map(allPlayers.map((p) => [p.id, p]));
   const lockedGameIds = getLockedGameIds(bracketsByGameId, pairsByGameId);
+  const backupLockedPlayerIds = getBackupBracketLockedPlayerIds(bracketsByGameId);
 
   const assignedPlayers = allPlayers.filter(
     (p): p is Player & { team: TeamId } => p.team === 'blue' || p.team === 'red'
@@ -1629,7 +1649,9 @@ export function planRebalance(
 
   for (const p of assignedPlayers) {
     const regularMainEntries = getRegularMainEntries(p, gameById);
-    const isLocked = regularMainEntries.some((e) => lockedGameIds.has(e.gameId));
+    const isLocked =
+      regularMainEntries.some((e) => lockedGameIds.has(e.gameId)) ||
+      backupLockedPlayerIds.has(p.id);
     if (isLocked) {
       lockedCount += 1;
     } else if (regularMainEntries.length === 0) {

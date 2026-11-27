@@ -111,6 +111,7 @@ export function ScoreboardTab({
           <div className="bg-surface border border-edge rounded-xl divide-y divide-edge">
             {scoreboard.champions.map((row) => {
               const isBlue = row.championTeam === 'blue';
+              const isExtra = Boolean(row.isBackupExtra);
               return (
                 <button
                   key={row.id}
@@ -119,19 +120,32 @@ export function ScoreboardTab({
                     onSelectSport({
                       gameId: row.gameId,
                       division: row.division,
+                      group: row.group,
                       tab: 'matches',
                       focus: 'ongoing',
                     })
                   }
-                  className="w-full text-left px-4 py-3 flex items-center justify-between gap-3 hover:bg-nested transition-colors duration-150"
+                  className={`w-full text-left px-4 flex items-center justify-between gap-3 hover:bg-nested transition-colors duration-150 ${
+                    isExtra ? 'py-2.5 bg-surface/60' : 'py-3'
+                  }`}
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     {row.iconKey && (
-                      <SportIcon iconKey={row.iconKey} size={18} className="text-fg-muted" />
+                      <SportIcon
+                        iconKey={row.iconKey}
+                        size={isExtra ? 16 : 18}
+                        className="text-fg-muted"
+                      />
                     )}
                     <div className="min-w-0">
                       <p className="text-xs text-fg-muted truncate">{row.title}</p>
-                      <p className="text-sm font-semibold text-fg break-words">
+                      <p
+                        className={`text-sm break-words ${
+                          isExtra
+                            ? 'font-medium text-fg-muted'
+                            : 'font-semibold text-fg'
+                        }`}
+                      >
                         {row.championName}
                       </p>
                     </div>
@@ -139,9 +153,9 @@ export function ScoreboardTab({
 
                   <div className="flex items-center gap-2 shrink-0">
                     <span
-                      className={`inline-flex items-center gap-1.5 text-xs font-semibold ${
-                        isBlue ? 'text-blue-light' : 'text-red-light'
-                      }`}
+                      className={`inline-flex items-center gap-1.5 text-xs ${
+                        isExtra ? 'font-medium opacity-80' : 'font-semibold'
+                      } ${isBlue ? 'text-blue-light' : 'text-red-light'}`}
                     >
                       <span
                         className={`w-2 h-2 rounded-full ${
@@ -151,8 +165,14 @@ export function ScoreboardTab({
                       />
                       <span>{isBlue ? 'Blue' : 'Red'}</span>
                     </span>
-                    <span className="px-2 py-0.5 rounded-md bg-nested border border-edge text-xs font-semibold text-fg tabular-nums">
-                      +{formatPoints(row.pointsAwarded)} pts
+                    <span
+                      className={`px-2 py-0.5 rounded-md bg-nested border border-edge text-xs tabular-nums ${
+                        isExtra
+                          ? 'font-medium text-fg-muted'
+                          : 'font-semibold text-fg'
+                      }`}
+                    >
+                      {isExtra ? '0 pts' : `+${formatPoints(row.pointsAwarded)} pts`}
                     </span>
                     <ChevronRight
                       size={16}

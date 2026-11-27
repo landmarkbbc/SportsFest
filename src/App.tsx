@@ -380,6 +380,8 @@ export default function App() {
     bracketsLoaded,
     massGamesByGameId,
     massGamesLoaded,
+    finalsByKey,
+    finalsLoaded,
     scoreboard,
   } = useBracketsAndScoreboard(
     authReady,
@@ -393,7 +395,8 @@ export default function App() {
     !playersLoaded ||
     !settingsLoaded ||
     !bracketsLoaded ||
-    !massGamesLoaded;
+    !massGamesLoaded ||
+    !finalsLoaded;
   const isSynced = isOnline && !playersFromCache;
   const showInitialPinSetup = authReady && settingsLoaded && !settingsExists;
 
@@ -873,8 +876,10 @@ export default function App() {
               bracketsByGameId={bracketsByGameId}
               pairsByGameId={pairsByGameId}
               massGamesByGameId={massGamesByGameId}
+              finalsByKey={finalsByKey}
               role={role}
               initialDivision={sportNav.division ?? null}
+              initialGroup={sportNav.group ?? null}
               initialTab={sportNav.tab}
               focusTarget={sportNav.focus}
               navKey={sportNav.key}

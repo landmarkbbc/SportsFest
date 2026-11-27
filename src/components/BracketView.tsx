@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import {
   Bracket,
+  BracketGroup,
   BracketMatch,
   BracketSlotSnapshot,
   Game,
@@ -62,6 +63,7 @@ interface BracketViewProps {
   bracket: Bracket | null;
   gamePairs?: GamePairs | null;
   division?: SkillLevel | null;
+  group?: BracketGroup;
   role: Role;
   focusTarget?: 'ongoing';
   navKey?: number;
@@ -418,6 +420,7 @@ export function BracketView({
   bracket,
   gamePairs = null,
   division = null,
+  group = 'main',
   role,
   focusTarget,
   navKey,
@@ -466,7 +469,9 @@ export function BracketView({
   const [animatedNewRound, setAnimatedNewRound] = useState<number | null>(null);
 
   const activeDivision = game.hasDivisions ? division : null;
-  const bracketDocId = getBracketDocId(game.id, activeDivision);
+  const effectiveGroup: BracketGroup =
+    game.type === 'individual' ? group : 'main';
+  const bracketDocId = getBracketDocId(game.id, activeDivision, effectiveGroup);
   const pairingMode = getGamePairingMode(game);
   const divisionMeta = activeDivision
     ? DIVISION_LEVELS.find((d) => d.level === activeDivision) ?? null
@@ -547,8 +552,9 @@ export function BracketView({
       getGameParticipantsSummary(game.id, players, {
         division: activeDivision,
         usesSkillLevel: game.usesSkillLevel,
+        group: effectiveGroup,
       }),
-    [game.id, game.usesSkillLevel, players, activeDivision]
+    [game.id, game.usesSkillLevel, players, activeDivision, effectiveGroup]
   );
 
   const minPlayersError = useMemo(
@@ -1054,7 +1060,7 @@ export function BracketView({
           {pairsSection}
 
           <div className="bg-surface border border-edge rounded-xl p-5 text-center space-y-4">
-            {divisionMeta && (
+            {(divisionMeta || effectiveGroup === 'backup') && (
               <div className="grid grid-cols-2 gap-3 text-left">
                 <div className="p-3 rounded-xl border border-blue-edge bg-blue-tint">
                   <div className="flex items-center gap-1.5">
@@ -1085,13 +1091,21 @@ export function BracketView({
 
             <div>
               <p className="text-sm font-semibold text-fg">
-                {divisionMeta ? `No ${divisionMeta.label} bracket yet` : 'No bracket yet'}
+                {effectiveGroup === 'backup'
+                  ? divisionMeta
+                    ? `No ${divisionMeta.label} backup bracket yet`
+                    : 'No backup bracket yet'
+                  : divisionMeta
+                    ? `No ${divisionMeta.label} bracket yet`
+                    : 'No bracket yet'}
               </p>
               <p className="text-xs text-fg-muted mt-1">
                 {isAdmin
                   ? isPairsGame
                     ? 'Create a match bracket from the confirmed Blue and Red pairs.'
-                    : 'Create a match bracket from assigned Blue and Red players.'
+                    : effectiveGroup === 'backup'
+                      ? 'Create a match bracket from assigned Blue and Red backup players.'
+                      : 'Create a match bracket from assigned Blue and Red players.'
                   : 'Waiting for an Admin to create the bracket.'}
               </p>
             </div>
@@ -1122,6 +1136,7 @@ export function BracketView({
           players={players}
           gamePairs={gamePairs}
           division={activeDivision}
+          group={effectiveGroup}
           onClose={() => setCreateOpen(false)}
           onShowToast={onShowToast}
         />
@@ -1690,7 +1705,8 @@ export function BracketView({
               </h2>
               <p className="text-sm text-fg-muted mt-1">
                 This deletes the current bracket and all match results for{' '}
-                {divisionMeta ? `${game.name} (${divisionMeta.label})` : game.name}.
+                {divisionMeta ? `${game.name} (${divisionMeta.label})` : game.name}
+                {effectiveGroup === 'backup' ? ' (Backup)' : ''}.
               </p>
             </div>
             <div className="flex items-center gap-3">
@@ -1866,6 +1882,12 @@ export function BracketView({
               <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-nested border border-edge text-fg-muted">
                 {summaryFormatLabel}
               </span>
+
+              {(effectiveGroup === 'backup' || bracket.group === 'backup') && (
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-status-amber-bg border border-status-amber-edge text-status-amber-fg">
+                  Backup bracket
+                </span>
+              )}
             </div>
           </div>
 

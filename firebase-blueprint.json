@@ -178,6 +178,11 @@
           "type": "integer",
           "description": "Skill level division (1, 2, or 3) for division-based games, or null."
         },
+        "group": {
+          "type": "string",
+          "enum": ["main", "backup"],
+          "description": "Bracket group (main or backup)."
+        },
         "backup": {
           "type": "object",
           "description": "Most recent score-reset snapshot (at, by, matches, status, championName, championTeam) for Admin restore."
@@ -206,6 +211,44 @@
         }
       },
       "required": ["pairs", "unpaired"]
+    },
+    "FinalMatch": {
+      "title": "FinalMatch",
+      "description": "Optional championship final match between main and backup bracket winners.",
+      "type": "object",
+      "properties": {
+        "a": {
+          "type": "object",
+          "description": "Main bracket winner snapshot."
+        },
+        "b": {
+          "type": "object",
+          "description": "Backup bracket winner snapshot."
+        },
+        "winner": {
+          "type": "string",
+          "description": "Winning side ('a' | 'b') or null while undecided."
+        },
+        "sameTeam": {
+          "type": "boolean",
+          "description": "True when both finalists belong to the same team."
+        },
+        "decidedBy": {
+          "type": "string",
+          "description": "Role label that recorded the winner, or null."
+        },
+        "decidedAt": {
+          "type": "integer",
+          "description": "Decision timestamp in ms, or null."
+        },
+        "createdAt": {
+          "type": "integer"
+        },
+        "updatedAt": {
+          "type": "integer"
+        }
+      },
+      "required": ["a", "b", "winner", "sameTeam", "createdAt"]
     },
     "MassGameItem": {
       "title": "MassGameItem",
@@ -396,6 +439,10 @@
     "/massgames/{gameId}": {
       "schema": { "$ref": "#/entities/MassGameDoc" },
       "description": "Inner games, winners, and points for mass games keyed by game ID."
+    },
+    "/finals/{finalKey}": {
+      "schema": { "$ref": "#/entities/FinalMatch" },
+      "description": "Optional main-vs-backup championship final keyed by game ID or division key."
     },
     "/settings/{settingId}": {
       "schema": { "$ref": "#/entities/AppSettings" },

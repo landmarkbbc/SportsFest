@@ -26,6 +26,7 @@ import {
   DEFAULT_POINTS_CHAMPION,
   DEFAULT_POINTS_PER_MATCH_WIN,
   EventProgram,
+  FinalMatch,
   Game,
   GamePair,
   GamePairs,
@@ -56,6 +57,7 @@ import {
   applyMatchUndo,
   applyResetScores,
   applyRestoreBackup,
+  getBracketBaseKey,
   pickRoundRobinChampionState,
 } from '../utils/bracket';
 
@@ -1294,16 +1296,17 @@ export async function resetWholeEvent(): Promise<void> {
     }
   };
 
-  const [playersSnap, bracketsSnap, pairsSnap, massSnap] = await Promise.all([
+  const [playersSnap, bracketsSnap, pairsSnap, massSnap, finalsSnap] = await Promise.all([
     readCollection('players'),
     readCollection('brackets'),
     readCollection('pairs'),
     readCollection('massgames'),
+    readCollection('finals'),
   ]);
 
   type ResetOp =
     | { kind: 'clearTeam'; id: string }
-    | { kind: 'deleteDoc'; col: 'brackets' | 'pairs'; id: string }
+    | { kind: 'deleteDoc'; col: 'brackets' | 'pairs' | 'finals'; id: string }
     | { kind: 'clearMass'; id: string; items: MassGameItem[] };
 
   const ops: ResetOp[] = [];
@@ -1319,6 +1322,9 @@ export async function resetWholeEvent(): Promise<void> {
   }
   for (const d of pairsSnap.docs) {
     ops.push({ kind: 'deleteDoc', col: 'pairs', id: d.id });
+  }
+  for (const d of finalsSnap.docs) {
+    ops.push({ kind: 'deleteDoc', col: 'finals', id: d.id });
   }
   for (const d of massSnap.docs) {
     const normalized = normalizeMassGameDoc(d.data() as Partial<MassGameDoc>);
@@ -1582,9 +1588,10 @@ export async function undoBracketMatch(
   expectedVersion?: number
 ): Promise<Bracket> {
   const ref = doc(db, 'brackets', bracketDocId);
+  const finalRef = doc(db, 'finals', getBracketBaseKey(bracketDocId));
   try {
     return await runTransaction(db, async (tx) => {
-      const snap = await tx.get(ref);
+      const [snap, finalSnap] = await Promise.all([tx.get(ref), tx.get(finalRef)]);
       if (!snap.exists()) {
         throw new StaleBracketError();
       }
@@ -1603,6 +1610,9 @@ export async function undoBracketMatch(
         championTeam: next.championTeam,
         updatedAt: next.updatedAt,
       });
+      if (finalSnap.exists()) {
+        tx.delete(finalRef);
+      }
       return next;
     });
   } catch (error) {
@@ -1622,9 +1632,10 @@ export async function resetBracketScores(
   expectedVersion?: number
 ): Promise<Bracket> {
   const ref = doc(db, 'brackets', bracketDocId);
+  const finalRef = doc(db, 'finals', getBracketBaseKey(bracketDocId));
   try {
     return await runTransaction(db, async (tx) => {
-      const snap = await tx.get(ref);
+      const [snap, finalSnap] = await Promise.all([tx.get(ref), tx.get(finalRef)]);
       if (!snap.exists()) {
         throw new StaleBracketError();
       }
@@ -1644,6 +1655,9 @@ export async function resetBracketScores(
         backup: next.backup,
         updatedAt: next.updatedAt,
       });
+      if (finalSnap.exists()) {
+        tx.delete(finalRef);
+      }
       return next;
     });
   } catch (error) {
@@ -1728,6 +1742,78 @@ export async function pickBracketChampion(
 
 export async function deleteBracket(gameId: string): Promise<void> {
   const ref = doc(db, 'brackets', gameId);
+  const finalRef = doc(db, 'finals', getBracketBaseKey(gameId));
+  try {
+    await runTransaction(db, async (tx) => {
+      const [snap, finalSnap] = await Promise.all([tx.get(ref), tx.get(finalRef)]);
+      if (snap.exists()) {
+        tx.delete(ref);
+      }
+      if (finalSnap.exists()) {
+        tx.delete(finalRef);
+      }
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `brackets/${gameId}`);
+  }
+}
+
+// Finals (Main vs Backup championship match; all mutations use runTransaction)
+export function subscribeFinals(
+  onData: (finalsByKey: Map<string, FinalMatch>) => void,
+  onError: (error: Error) => void
+): () => void {
+  const q = query(collection(db, 'finals'));
+  return onSnapshot(
+    q,
+    { includeMetadataChanges: true },
+    (snapshot) => {
+      const map = new Map<string, FinalMatch>();
+      for (const d of snapshot.docs) {
+        map.set(d.id, d.data() as FinalMatch);
+      }
+      onData(map);
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.LIST, 'finals');
+      } catch (e) {
+        onError(e instanceof Error ? e : new Error(String(e)));
+      }
+    }
+  );
+}
+
+export async function createFinalMatch(
+  finalKey: string,
+  mainWinner: BracketSlotSnapshot,
+  backupWinner: BracketSlotSnapshot
+): Promise<void> {
+  const ref = doc(db, 'finals', finalKey);
+  const now = Date.now();
+  const payload: FinalMatch = {
+    a: mainWinner,
+    b: backupWinner,
+    winner: null,
+    sameTeam: mainWinner.team === backupWinner.team,
+    decidedBy: null,
+    decidedAt: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+  try {
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (snap.exists()) return;
+      tx.set(ref, payload);
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, `finals/${finalKey}`);
+  }
+}
+
+export async function deleteFinalMatch(finalKey: string): Promise<void> {
+  const ref = doc(db, 'finals', finalKey);
   try {
     await runTransaction(db, async (tx) => {
       const snap = await tx.get(ref);
@@ -1736,7 +1822,63 @@ export async function deleteBracket(gameId: string): Promise<void> {
       }
     });
   } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, `brackets/${gameId}`);
+    handleFirestoreError(error, OperationType.DELETE, `finals/${finalKey}`);
+  }
+}
+
+export async function decideFinalMatch(
+  finalKey: string,
+  side: 'a' | 'b',
+  decidedBy: string
+): Promise<void> {
+  const ref = doc(db, 'finals', finalKey);
+  try {
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) {
+        throw new StaleBracketError();
+      }
+      const current = snap.data() as FinalMatch;
+      if (current.winner !== null) {
+        throw new AlreadyDecidedError();
+      }
+      const now = Date.now();
+      tx.update(ref, {
+        winner: side,
+        decidedBy,
+        decidedAt: now,
+        updatedAt: now,
+      });
+    });
+  } catch (error) {
+    if (error instanceof AlreadyDecidedError || error instanceof StaleBracketError) {
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.UPDATE, `finals/${finalKey}`);
+  }
+}
+
+export async function undoFinalMatch(finalKey: string): Promise<void> {
+  const ref = doc(db, 'finals', finalKey);
+  try {
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) {
+        throw new StaleBracketError();
+      }
+      const now = Date.now();
+      tx.update(ref, {
+        winner: null,
+        decidedBy: null,
+        decidedAt: null,
+        updatedAt: now,
+      });
+    });
+  } catch (error) {
+    if (error instanceof StaleBracketError) {
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.UPDATE, `finals/${finalKey}`);
   }
 }
 

@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
-import { BracketFormat, Game, GamePairs, Player, SkillLevel } from '../types/models';
+import {
+  BracketFormat,
+  BracketGroup,
+  Game,
+  GamePairs,
+  Player,
+  SkillLevel,
+} from '../types/models';
 import { createBracket } from '../services/db';
 import {
   DIVISION_LEVELS,
@@ -17,6 +24,7 @@ interface CreateBracketModalProps {
   players: Player[];
   gamePairs?: GamePairs | null;
   division?: SkillLevel | null;
+  group?: BracketGroup;
   onClose: () => void;
   onShowToast: (type: 'success' | 'error', text: string) => void;
 }
@@ -27,6 +35,7 @@ export function CreateBracketModal({
   players,
   gamePairs = null,
   division = null,
+  group = 'main',
   onClose,
   onShowToast,
 }: CreateBracketModalProps) {
@@ -35,12 +44,15 @@ export function CreateBracketModal({
   const [format, setFormat] = useState<BracketFormat>(defaultFormat);
   const [submitting, setSubmitting] = useState(false);
 
+  const effectiveGroup: BracketGroup =
+    game.type === 'individual' ? group : 'main';
+
   useEffect(() => {
     if (open) {
       setFormat(game.type === 'team' ? 'teammatch' : 'elimination');
       setSubmitting(false);
     }
-  }, [open, game.id, game.type, division]);
+  }, [open, game.id, game.type, division, effectiveGroup]);
 
   const activeDivision = game.hasDivisions ? division : null;
   const divisionLabel = activeDivision
@@ -52,8 +64,9 @@ export function CreateBracketModal({
       getGameParticipantsSummary(game.id, players, {
         division: activeDivision,
         usesSkillLevel: game.usesSkillLevel,
+        group: effectiveGroup,
       }),
-    [game.id, game.usesSkillLevel, players, activeDivision]
+    [game.id, game.usesSkillLevel, players, activeDivision, effectiveGroup]
   );
 
   if (!open) return null;
@@ -81,17 +94,19 @@ export function CreateBracketModal({
     if (isBlocked || submitting) return;
     setSubmitting(true);
     try {
-      const bracketDocId = getBracketDocId(game.id, activeDivision);
+      const bracketDocId = getBracketDocId(game.id, activeDivision, effectiveGroup);
       const bracket = buildInitialBracket(game, players, format, {
         division: activeDivision,
+        group: effectiveGroup,
         gamePairs,
       });
       await createBracket(bracketDocId, bracket);
+      const targetLabel = divisionLabel ? `${game.name} · ${divisionLabel}` : game.name;
       onShowToast(
         'success',
-        divisionLabel
-          ? `Bracket created for ${game.name} · ${divisionLabel}.`
-          : `Bracket created for ${game.name}.`
+        effectiveGroup === 'backup'
+          ? `Backup bracket created for ${targetLabel}.`
+          : `Bracket created for ${targetLabel}.`
       );
       onClose();
     } catch (err) {
@@ -118,10 +133,11 @@ export function CreateBracketModal({
               id="create-bracket-title"
               className="text-[16px] font-semibold text-fg"
             >
-              Create bracket
+              {effectiveGroup === 'backup' ? 'Create backup bracket' : 'Create bracket'}
             </h2>
             <p className="text-xs text-fg-muted mt-0.5 truncate">
               {divisionLabel ? `${game.name} · ${divisionLabel}` : game.name}
+              {effectiveGroup === 'backup' ? ' · Backup players' : ''}
             </p>
           </div>
           <button

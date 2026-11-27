@@ -41,9 +41,12 @@ export type DisplayBalanceStatus = BalanceStatus | 'No players' | 'Not assigned 
 
 export type AppTab = 'sports' | 'scoreboard' | 'teams' | 'players' | 'settings';
 
+export type BracketGroup = 'main' | 'backup';
+
 export interface SportNavigationTarget {
   gameId: string;
   division?: SkillLevel | null;
+  group?: BracketGroup;
   tab?: 'matches' | 'players';
   focus?: 'ongoing';
   fromTab?: AppTab;
@@ -210,7 +213,19 @@ export interface Bracket {
   championName: string | null;
   championTeam: TeamId | null;
   division?: SkillLevel | null;
+  group?: BracketGroup;
   backup?: BracketBackup | null;
+  createdAt: number;
+  updatedAt?: number;
+}
+
+export interface FinalMatch {
+  a: BracketSlotSnapshot;
+  b: BracketSlotSnapshot;
+  winner: 'a' | 'b' | null;
+  sameTeam: boolean;
+  decidedBy: string | null;
+  decidedAt: number | null;
   createdAt: number;
   updatedAt?: number;
 }

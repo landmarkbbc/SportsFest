@@ -2,6 +2,7 @@ import {
   Bracket,
   BracketBackup,
   BracketFormat,
+  BracketGroup,
   BracketMatch,
   BracketSlotSnapshot,
   Game,
@@ -54,8 +55,21 @@ export function formatPoints(value: number): string {
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
 }
 
-export function getBracketDocId(gameId: string, division?: SkillLevel | null): string {
-  return division ? `${gameId}__L${division}` : gameId;
+export function getBracketDocId(
+  gameId: string,
+  division?: SkillLevel | null,
+  group: BracketGroup = 'main'
+): string {
+  const base = division ? `${gameId}__L${division}` : gameId;
+  return group === 'backup' ? `${base}__backup` : base;
+}
+
+export function isBackupBracketId(docId: string): boolean {
+  return docId.endsWith('__backup');
+}
+
+export function getBracketBaseKey(docId: string): string {
+  return isBackupBracketId(docId) ? docId.slice(0, -'__backup'.length) : docId;
 }
 
 export function getGamePairingMode(game: Pick<Game, 'usesSkillLevel' | 'hasDivisions'>): PairingMode {
@@ -86,6 +100,7 @@ export function getGameParticipantsSummary(
   options?: {
     division?: SkillLevel | null;
     usesSkillLevel?: boolean;
+    group?: BracketGroup;
   }
 ): GameParticipantsSummary {
   const blue: BracketSlotSnapshot[] = [];
@@ -93,10 +108,12 @@ export function getGameParticipantsSummary(
   let unassignedCount = 0;
   const division = options?.division ?? null;
   const includeLevel = options?.usesSkillLevel ?? true;
+  const group = options?.group ?? 'main';
 
   for (const player of players) {
     const entry = player.entries.find((e) => e.gameId === gameId);
-    if (!entry || !isMainEntry(entry)) continue;
+    if (!entry) continue;
+    if (group === 'backup' ? isMainEntry(entry) : !isMainEntry(entry)) continue;
     const effLevel = getEffectiveLevel(entry);
     if (division !== null && effLevel !== division) {
       continue;
@@ -362,12 +379,15 @@ export function buildInitialBracket(
   format: BracketFormat,
   options?: {
     division?: SkillLevel | null;
+    group?: BracketGroup;
     gamePairs?: GamePairs | null;
     now?: number;
     randomFn?: () => number;
   }
 ): Bracket {
   const division = game.hasDivisions ? (options?.division ?? null) : null;
+  const group: BracketGroup =
+    game.type === 'individual' ? (options?.group ?? 'main') : 'main';
   const now = options?.now ?? Date.now();
   const randomFn = options?.randomFn ?? Math.random;
 
@@ -390,6 +410,7 @@ export function buildInitialBracket(
     const summary = getGameParticipantsSummary(game.id, players, {
       division,
       usesSkillLevel: game.usesSkillLevel,
+      group,
     });
     blue = summary.blue;
     red = summary.red;
@@ -425,6 +446,7 @@ export function buildInitialBracket(
       championName: null,
       championTeam: null,
       division,
+      group,
       createdAt: now,
       updatedAt: now,
     };
@@ -440,6 +462,7 @@ export function buildInitialBracket(
       championName: null,
       championTeam: null,
       division,
+      group,
       createdAt: now,
       updatedAt: now,
     };
@@ -452,6 +475,7 @@ export function buildInitialBracket(
     championName: null,
     championTeam: null,
     division,
+    group,
     createdAt: now,
     updatedAt: now,
   };
@@ -511,9 +535,24 @@ export function getRoundRobinTiedLeaders(bracket: Bracket): BracketSlotSnapshot[
   return tied.length > 1 ? tied : [];
 }
 
-export function getBracketChampionPlayerId(bracket: Bracket): string | null {
-  if (bracket.status !== 'complete' || !bracket.championName || bracket.format === 'teammatch') {
+export function getBracketChampionSnapshot(
+  bracket: Bracket
+): BracketSlotSnapshot | null {
+  if (
+    bracket.status !== 'complete' ||
+    !bracket.championName ||
+    !bracket.championTeam
+  ) {
     return null;
+  }
+  if (bracket.format === 'teammatch') {
+    return {
+      playerId: bracket.championTeam === 'blue' ? 'team_blue' : 'team_red',
+      name: bracket.championName,
+      team: bracket.championTeam,
+      dept: null,
+      level: null,
+    };
   }
   if (bracket.format === 'elimination') {
     let topRound = -1;
@@ -524,11 +563,41 @@ export function getBracketChampionPlayerId(bracket: Bracket): string | null {
         topSlot = m.winner === 'a' ? m.a : m.b;
       }
     }
-    return topSlot?.playerId ?? null;
+    return (
+      topSlot ?? {
+        playerId: '',
+        name: bracket.championName,
+        team: bracket.championTeam,
+        dept: null,
+        level: null,
+      }
+    );
   }
   const standings = computeRoundRobinStandings(bracket);
-  const exact = standings.find((s) => s.player.name === bracket.championName);
-  return exact?.player.playerId ?? standings[0]?.player.playerId ?? null;
+  const exact =
+    standings.find(
+      (s) =>
+        s.player.name === bracket.championName &&
+        s.player.team === bracket.championTeam
+    ) ??
+    standings.find((s) => s.player.name === bracket.championName) ??
+    standings[0];
+  return (
+    exact?.player ?? {
+      playerId: '',
+      name: bracket.championName,
+      team: bracket.championTeam,
+      dept: null,
+      level: null,
+    }
+  );
+}
+
+export function getBracketChampionPlayerId(bracket: Bracket): string | null {
+  if (bracket.status !== 'complete' || !bracket.championName || bracket.format === 'teammatch') {
+    return null;
+  }
+  return getBracketChampionSnapshot(bracket)?.playerId || null;
 }
 
 export function applyMatchDecision(

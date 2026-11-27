@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, ArrowLeft, Trophy, X } from 'lucide-react';
 import {
   Bracket,
+  BracketGroup,
   DEPARTMENTS,
   ELIGIBILITY_LABELS,
+  FinalMatch,
   GAME_SESSION_LABELS,
   GAME_TYPE_LABELS,
   Game,
@@ -34,6 +36,7 @@ import {
   getGameParticipantsSummary,
 } from '../utils/bracket';
 import { BracketView } from './BracketView';
+import { ChampionDecisionCard } from './ChampionDecisionCard';
 import { MassGameView } from './MassGameView';
 import { ChurchMarker, PlayerNameWithChurch, SlotBadge } from './PlayerMarkers';
 import { SportIcon } from './SportIcons';
@@ -46,8 +49,10 @@ interface SportDetailViewProps {
   bracketsByGameId: Map<string, Bracket>;
   pairsByGameId: Map<string, GamePairs>;
   massGamesByGameId: Map<string, MassGameDoc>;
+  finalsByKey: Map<string, FinalMatch>;
   role: Role;
   initialDivision?: SkillLevel | null;
+  initialGroup?: BracketGroup | null;
   initialTab?: 'matches' | 'players';
   focusTarget?: 'ongoing';
   navKey?: number;
@@ -175,8 +180,10 @@ export function SportDetailView({
   bracketsByGameId,
   pairsByGameId,
   massGamesByGameId,
+  finalsByKey,
   role,
   initialDivision,
+  initialGroup,
   initialTab,
   focusTarget,
   navKey,
@@ -185,14 +192,35 @@ export function SportDetailView({
   onOpenPlayerDetails,
   onShowToast,
 }: SportDetailViewProps) {
+  const isIndividual = game.type === 'individual';
   const hasExistingBracket = useMemo(() => {
     if (game.hasDivisions) {
-      return DIVISION_LEVELS.some((d) =>
-        bracketsByGameId.has(getBracketDocId(game.id, d.level))
+      return DIVISION_LEVELS.some(
+        (d) =>
+          bracketsByGameId.has(getBracketDocId(game.id, d.level)) ||
+          (isIndividual &&
+            bracketsByGameId.has(getBracketDocId(game.id, d.level, 'backup')))
       );
     }
-    return bracketsByGameId.has(game.id);
-  }, [game.id, game.hasDivisions, bracketsByGameId]);
+    return (
+      bracketsByGameId.has(game.id) ||
+      (isIndividual && bracketsByGameId.has(getBracketDocId(game.id, null, 'backup')))
+    );
+  }, [game.id, game.hasDivisions, isIndividual, bracketsByGameId]);
+
+  const resolveInitialGroup = (): BracketGroup => {
+    if (!isIndividual) return 'main';
+    if (initialGroup === 'backup' || initialGroup === 'main') return initialGroup;
+    if (focusTarget === 'ongoing') {
+      const div = game.hasDivisions ? (initialDivision ?? 1) : null;
+      const mainB = bracketsByGameId.get(getBracketDocId(game.id, div));
+      const backupB = bracketsByGameId.get(getBracketDocId(game.id, div, 'backup'));
+      if (mainB?.status === 'complete' && backupB?.status === 'active') {
+        return 'backup';
+      }
+    }
+    return 'main';
+  };
 
   const [subTab, setSubTab] = useState<'matches' | 'players'>(
     () => initialTab ?? (hasExistingBracket ? 'matches' : 'players')
@@ -200,6 +228,7 @@ export function SportDetailView({
   const [activeDivision, setActiveDivision] = useState<SkillLevel>(
     () => initialDivision ?? 1
   );
+  const [bracketGroup, setBracketGroup] = useState<BracketGroup>(resolveInitialGroup);
   const [actionTarget, setActionTarget] = useState<{
     player: Player;
     entry: PlayerEntry;
@@ -214,6 +243,7 @@ export function SportDetailView({
   useEffect(() => {
     setSubTab(initialTab ?? (hasExistingBracket ? 'matches' : 'players'));
     setActiveDivision(initialDivision ?? 1);
+    setBracketGroup(resolveInitialGroup());
     setActionTarget(null);
     setConfirmRemoveTarget(null);
     // Reset default tab only when switching game or navigating from another screen
@@ -266,20 +296,29 @@ export function SportDetailView({
         division: d.level,
         usesSkillLevel: game.usesSkillLevel,
       });
-      const bracket =
-        bracketsByGameId.get(getBracketDocId(game.id, d.level)) ?? null;
+      const baseId = getBracketDocId(game.id, d.level);
+      const bracket = bracketsByGameId.get(baseId) ?? null;
+      const finalDoc = isIndividual ? finalsByKey.get(baseId) ?? null : null;
       return {
         ...d,
         blueCount: summary.blue.length,
         redCount: summary.red.length,
         bracket,
+        finalDoc,
       };
     });
-  }, [game.hasDivisions, game.id, game.usesSkillLevel, players, bracketsByGameId]);
+  }, [game.hasDivisions, game.id, game.usesSkillLevel, isIndividual, players, bracketsByGameId, finalsByKey]);
 
-  const activeBracket = game.hasDivisions
-    ? bracketsByGameId.get(getBracketDocId(game.id, activeDivision)) ?? null
-    : bracketsByGameId.get(game.id) ?? null;
+  const currentDivision = game.hasDivisions ? activeDivision : null;
+  const activeBaseKey = getBracketDocId(game.id, currentDivision);
+  const mainBracket = bracketsByGameId.get(activeBaseKey) ?? null;
+  const backupBracket = isIndividual
+    ? bracketsByGameId.get(getBracketDocId(game.id, currentDivision, 'backup')) ?? null
+    : null;
+  const activeFinalMatch = isIndividual ? finalsByKey.get(activeBaseKey) ?? null : null;
+  const effectiveBracketGroup: BracketGroup = isIndividual ? bracketGroup : 'main';
+  const activeBracket =
+    effectiveBracketGroup === 'backup' ? backupBracket : mainBracket;
 
   const gamePairs =
     game.type === 'pairs' ? pairsByGameId.get(game.id) ?? null : null;
@@ -321,10 +360,18 @@ export function SportDetailView({
       for (const d of DIVISION_LEVELS) {
         const b = bracketsByGameId.get(getBracketDocId(game.id, d.level));
         if (b) bracketsToCheck.push(b);
+        if (isIndividual) {
+          const bb = bracketsByGameId.get(getBracketDocId(game.id, d.level, 'backup'));
+          if (bb) bracketsToCheck.push(bb);
+        }
       }
     } else {
       const b = bracketsByGameId.get(game.id);
       if (b) bracketsToCheck.push(b);
+      if (isIndividual) {
+        const bb = bracketsByGameId.get(getBracketDocId(game.id, null, 'backup'));
+        if (bb) bracketsToCheck.push(bb);
+      }
     }
 
     for (const bracket of bracketsToCheck) {
@@ -546,10 +593,29 @@ export function SportDetailView({
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {divisionSummaries.map((d) => {
-                const isComplete =
-                  d.bracket?.status === 'complete' &&
-                  Boolean(d.bracket.championName) &&
-                  Boolean(d.bracket.championTeam);
+                const finalWinnerSlot = d.finalDoc
+                  ? d.finalDoc.winner === 'a'
+                    ? d.finalDoc.a
+                    : d.finalDoc.winner === 'b'
+                      ? d.finalDoc.b
+                      : null
+                  : null;
+                const champName = d.finalDoc
+                  ? finalWinnerSlot?.name ?? null
+                  : d.bracket?.status === 'complete'
+                    ? d.bracket.championName
+                    : null;
+                const champTeam = d.finalDoc
+                  ? finalWinnerSlot?.team ?? null
+                  : d.bracket?.status === 'complete'
+                    ? d.bracket.championTeam
+                    : null;
+                const champId = d.finalDoc
+                  ? finalWinnerSlot?.playerId || null
+                  : d.bracket && game.type !== 'pairs'
+                    ? getBracketChampionPlayerId(d.bracket)
+                    : null;
+                const champChurch = champId ? playerById.get(champId)?.church : undefined;
                 return (
                   <div
                     key={d.level}
@@ -558,25 +624,21 @@ export function SportDetailView({
                     <span className="text-xs font-medium text-fg-muted shrink-0">
                       {d.label}
                     </span>
-                    {isComplete && d.bracket ? (() => {
-                      const champId = game.type !== 'pairs' ? getBracketChampionPlayerId(d.bracket) : null;
-                      const champChurch = champId ? playerById.get(champId)?.church : undefined;
-                      return (
-                        <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-fg min-w-0">
-                          <span
-                            className={`w-2 h-2 rounded-full shrink-0 ${
-                              d.bracket.championTeam === 'blue'
-                                ? 'bg-blue-team'
-                                : 'bg-red-team'
-                            }`}
-                            aria-hidden="true"
-                          />
-                          <span className="truncate">{d.bracket.championName}</span>
-                          <ChurchMarker church={champChurch} />
-                        </span>
-                      );
-                    })() : (
-                      <span className="text-xs text-fg-muted">pending</span>
+                    {champName && champTeam ? (
+                      <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-fg min-w-0">
+                        <span
+                          className={`w-2 h-2 rounded-full shrink-0 ${
+                            champTeam === 'blue' ? 'bg-blue-team' : 'bg-red-team'
+                          }`}
+                          aria-hidden="true"
+                        />
+                        <span className="truncate">{champName}</span>
+                        <ChurchMarker church={champChurch} />
+                      </span>
+                    ) : (
+                      <span className="text-xs text-fg-muted">
+                        {d.finalDoc ? 'final pending' : 'pending'}
+                      </span>
                     )}
                   </div>
                 );
@@ -657,12 +719,68 @@ export function SportDetailView({
             </div>
           )}
 
+          {isIndividual &&
+            mainBracket?.status === 'complete' &&
+            backupBracket?.status === 'complete' && (
+              <ChampionDecisionCard
+                finalKey={activeBaseKey}
+                game={game}
+                divisionLabel={
+                  currentDivision
+                    ? DIVISION_LEVELS.find((d) => d.level === currentDivision)?.label ?? null
+                    : null
+                }
+                mainBracket={mainBracket}
+                backupBracket={backupBracket}
+                finalMatch={activeFinalMatch}
+                playerById={playerById}
+                role={role}
+                onShowToast={onShowToast}
+              />
+            )}
+
+          {isIndividual && (
+            <div
+              role="tablist"
+              aria-label="Bracket group"
+              className="grid grid-cols-2 p-1 rounded-xl bg-surface border border-edge"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={effectiveBracketGroup === 'main'}
+                onClick={() => setBracketGroup('main')}
+                className={`min-h-[40px] rounded-lg text-sm font-medium transition-colors duration-150 ${
+                  effectiveBracketGroup === 'main'
+                    ? 'bg-primary text-primary-fg'
+                    : 'text-fg-muted hover:text-fg'
+                }`}
+              >
+                Main
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={effectiveBracketGroup === 'backup'}
+                onClick={() => setBracketGroup('backup')}
+                className={`min-h-[40px] rounded-lg text-sm font-medium transition-colors duration-150 ${
+                  effectiveBracketGroup === 'backup'
+                    ? 'bg-primary text-primary-fg'
+                    : 'text-fg-muted hover:text-fg'
+                }`}
+              >
+                Backup
+              </button>
+            </div>
+          )}
+
           <BracketView
             game={game}
             players={players}
             bracket={activeBracket}
             gamePairs={gamePairs}
-            division={game.hasDivisions ? activeDivision : null}
+            division={currentDivision}
+            group={effectiveBracketGroup}
             role={role}
             focusTarget={focusTarget}
             navKey={navKey}
