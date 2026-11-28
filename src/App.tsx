@@ -1062,6 +1062,7 @@ export default function App() {
         role={role}
         games={games}
         lockedGameIds={lockedGameIds}
+        bracketsByGameId={bracketsByGameId}
         separations={separations}
         churches={churches}
         onClose={() => setPlayerModalOpen(false)}

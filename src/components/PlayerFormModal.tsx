@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, ArrowRight, Trash2, X } from 'lucide-react';
 import {
+  Bracket,
   DEPARTMENTS,
   Department,
   ENTRY_SLOTS,
@@ -47,6 +48,7 @@ interface PlayerFormModalProps {
   role: Role;
   games: Game[];
   lockedGameIds: Set<string>;
+  bracketsByGameId?: ReadonlyMap<string, Bracket>;
   separations: SeparationPair[];
   churches: string[];
   onClose: () => void;
@@ -181,6 +183,7 @@ export function PlayerFormModal({
   role,
   games,
   lockedGameIds,
+  bracketsByGameId,
   separations,
   churches,
   onClose,
@@ -217,6 +220,13 @@ export function PlayerFormModal({
     separationPartnerNames: string[];
   } | null>(null);
 
+  // Unassign team confirmation state (when assigned player switches to Unassigned)
+  const [unassignConfirmData, setUnassignConfirmData] = useState<{
+    fromTeam: TeamId;
+    entries: PlayerEntry[];
+    lockedGameNames: string[];
+  } | null>(null);
+
   // Validation errors
   const [submitted, setSubmitted] = useState(false);
   const [debouncedName, setDebouncedName] = useState('');
@@ -241,6 +251,7 @@ export function PlayerFormModal({
     setSubmitted(false);
     setConfirmDeleteOpen(false);
     setMoveConfirmData(null);
+    setUnassignConfirmData(null);
   }, [open, player, mode]);
 
   useEffect(() => {
@@ -452,6 +463,43 @@ export function PlayerFormModal({
       return;
     }
 
+    // If Admin changed an already-assigned player to Unassigned, ask confirmation first
+    if (
+      mode === 'edit' &&
+      isAdmin &&
+      player &&
+      player.team !== null &&
+      editTeam === null
+    ) {
+      const seenLocked = new Set<string>();
+      const lockedGameNames: string[] = [];
+      for (const entry of player.entries) {
+        if (seenLocked.has(entry.gameId)) continue;
+        const mainLocked = isMainEntry(entry) && lockedGameIds.has(entry.gameId);
+        const backupLocked =
+          !isMainEntry(entry) &&
+          bracketsByGameId !== undefined &&
+          Array.from(bracketsByGameId.entries()).some(([docId, b]) => {
+            if (!(docId.endsWith('__backup') || b.group === 'backup')) return false;
+            const baseGameId = docId.replace(/__backup$/, '').replace(/__L\d+$/, '');
+            if (baseGameId !== entry.gameId) return false;
+            return b.matches.some(
+              (m) => m.a?.playerId === player.id || m.b?.playerId === player.id
+            );
+          });
+        if (mainLocked || backupLocked) {
+          seenLocked.add(entry.gameId);
+          lockedGameNames.push(gameById.get(entry.gameId)?.name ?? entry.gameId);
+        }
+      }
+      setUnassignConfirmData({
+        fromTeam: player.team,
+        entries,
+        lockedGameNames,
+      });
+      return;
+    }
+
     await executeSave(entries);
   }
 
@@ -459,6 +507,12 @@ export function PlayerFormModal({
     if (!moveConfirmData) return;
     await executeSave(moveConfirmData.entries);
     setMoveConfirmData(null);
+  }
+
+  async function handleConfirmUnassignSave() {
+    if (!unassignConfirmData) return;
+    await executeSave(unassignConfirmData.entries);
+    setUnassignConfirmData(null);
   }
 
   async function handleDelete() {
@@ -781,29 +835,11 @@ export function PlayerFormModal({
             {mode === 'edit' && isAdmin && player && (
               <div>
                 <span className="block text-sm font-medium text-fg mb-1.5">Team</span>
-                <div
-                  className={`grid gap-1 p-1 bg-nested border border-edge rounded-xl ${
-                    player.team === null ? 'grid-cols-3' : 'grid-cols-2'
-                  }`}
-                >
-                  {player.team === null && (
-                    <button
-                      type="button"
-                      onClick={() => setEditTeam(null)}
-                      className={`min-h-[44px] px-3 rounded-lg text-xs font-medium transition-colors duration-150 inline-flex items-center justify-center gap-1.5 ${
-                        editTeam === null
-                          ? 'bg-surface text-fg border border-edge'
-                          : 'text-fg-muted hover:text-fg'
-                      }`}
-                    >
-                      <span className="w-2 h-2 rounded-full bg-fg-muted" aria-hidden="true" />
-                      <span>Unassigned</span>
-                    </button>
-                  )}
+                <div className="grid grid-cols-3 gap-1 p-1 bg-nested border border-edge rounded-xl">
                   <button
                     type="button"
                     onClick={() => setEditTeam('blue')}
-                    className={`min-h-[44px] px-3 rounded-lg text-xs font-medium transition-colors duration-150 inline-flex items-center justify-center gap-1.5 ${
+                    className={`min-h-[44px] px-2 rounded-lg text-xs font-medium transition-colors duration-150 inline-flex items-center justify-center gap-1.5 ${
                       editTeam === 'blue'
                         ? 'bg-blue-tint text-blue-light border border-blue-edge'
                         : 'text-fg-muted hover:text-fg'
@@ -815,7 +851,7 @@ export function PlayerFormModal({
                   <button
                     type="button"
                     onClick={() => setEditTeam('red')}
-                    className={`min-h-[44px] px-3 rounded-lg text-xs font-medium transition-colors duration-150 inline-flex items-center justify-center gap-1.5 ${
+                    className={`min-h-[44px] px-2 rounded-lg text-xs font-medium transition-colors duration-150 inline-flex items-center justify-center gap-1.5 ${
                       editTeam === 'red'
                         ? 'bg-red-tint text-red-light border border-red-edge'
                         : 'text-fg-muted hover:text-fg'
@@ -823,6 +859,18 @@ export function PlayerFormModal({
                   >
                     <span className="w-2 h-2 rounded-full bg-red-team" aria-hidden="true" />
                     <span>Red</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditTeam(null)}
+                    className={`min-h-[44px] px-2 rounded-lg text-xs font-medium transition-colors duration-150 inline-flex items-center justify-center gap-1.5 ${
+                      editTeam === null
+                        ? 'bg-surface text-fg border border-edge'
+                        : 'text-fg-muted hover:text-fg'
+                    }`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-fg-muted" aria-hidden="true" />
+                    <span>Unassigned</span>
                   </button>
                 </div>
               </div>
@@ -1191,6 +1239,62 @@ export function PlayerFormModal({
                 className="min-h-[44px] px-5 py-2 rounded-xl bg-primary text-primary-fg text-sm font-medium hover:bg-primary-hover disabled:opacity-50"
               >
                 {saving ? 'Moving...' : 'Move'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Unassign Team Confirmation Dialog */}
+      {unassignConfirmData && player && (
+        <div
+          className="fixed inset-0 z-50 bg-overlay flex items-end sm:items-center justify-center p-0 sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="unassign-confirm-title"
+        >
+          <div className="bg-surface w-full sm:max-w-md rounded-t-2xl sm:rounded-xl border border-edge p-6 shadow-xl space-y-4 pb-safe">
+            <h2 id="unassign-confirm-title" className="text-[16px] font-semibold text-fg">
+              Unassign {player.name} from{' '}
+              {unassignConfirmData.fromTeam === 'blue' ? 'Blue' : 'Red'}?
+            </h2>
+
+            <p className="text-sm text-fg-muted">
+              They will be left out of team balancing until they are assigned again.
+            </p>
+
+            {unassignConfirmData.lockedGameNames.length > 0 && (
+              <div className="space-y-1.5">
+                {unassignConfirmData.lockedGameNames.map((gName) => (
+                  <div
+                    key={gName}
+                    className="flex items-start gap-2 p-2.5 rounded-xl border border-status-amber-edge bg-status-amber-bg text-status-amber-fg text-xs font-medium leading-snug"
+                  >
+                    <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+                    <span>
+                      A bracket for {gName} already includes this player. It is not changed automatically. Reset that bracket first to avoid a mismatch.
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end pt-2">
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => setUnassignConfirmData(null)}
+                className="min-h-[44px] px-4 py-2 rounded-xl border border-edge text-sm font-medium text-fg bg-transparent hover:bg-nested disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={handleConfirmUnassignSave}
+                className="min-h-[44px] px-5 py-2 rounded-xl bg-primary text-primary-fg text-sm font-medium hover:bg-primary-hover disabled:opacity-50"
+              >
+                {saving ? 'Unassigning...' : 'Unassign'}
               </button>
             </div>
           </div>
