@@ -200,7 +200,8 @@ export function PlayerFormModal({
   const [churchError, setChurchError] = useState('');
   const [savingChurch, setSavingChurch] = useState(false);
   const [drafts, setDrafts] = useState<DraftBySlot>(() => buildInitialDrafts(null));
-  const [walkInChoice, setWalkInChoice] = useState<WalkInTeamChoice>('auto');
+  const [walkInChoice, setWalkInChoice] = useState<WalkInTeamChoice>('unassigned');
+  const [walkInTeamTouched, setWalkInTeamTouched] = useState(false);
   const [editTeam, setEditTeam] = useState<TeamId | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
@@ -231,8 +232,11 @@ export function PlayerFormModal({
     setAddingChurch(false);
     setNewChurchName('');
     setChurchError('');
-    setDrafts(buildInitialDrafts(player));
-    setWalkInChoice('auto');
+    const nextDrafts = buildInitialDrafts(player);
+    setDrafts(nextDrafts);
+    const hasInitialGame = ENTRY_SLOTS.some(({ key }) => Boolean(nextDrafts[key].gameId));
+    setWalkInChoice(hasInitialGame ? 'auto' : 'unassigned');
+    setWalkInTeamTouched(false);
     setEditTeam(player?.team ?? null);
     setSubmitted(false);
     setConfirmDeleteOpen(false);
@@ -317,11 +321,22 @@ export function PlayerFormModal({
 
   if (!open) return null;
 
+  const hasSelectedWalkInGame = ENTRY_SLOTS.some(({ key }) =>
+    Boolean(drafts[key].gameId)
+  );
+
   function updateSlot(slot: EntrySlot, patch: Partial<SlotDraft>) {
-    setDrafts((prev) => ({
-      ...prev,
-      [slot]: { ...prev[slot], ...patch },
-    }));
+    setDrafts((prev) => {
+      const next = {
+        ...prev,
+        [slot]: { ...prev[slot], ...patch },
+      };
+      if (mode === 'walkin' && !walkInTeamTouched) {
+        const nextHasGame = ENTRY_SLOTS.some(({ key }) => Boolean(next[key].gameId));
+        setWalkInChoice(nextHasGame ? 'auto' : 'unassigned');
+      }
+      return next;
+    });
   }
 
   function collectEntries(): PlayerEntry[] {
@@ -820,7 +835,10 @@ export function PlayerFormModal({
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 p-1 bg-nested border border-edge rounded-xl">
                   <button
                     type="button"
-                    onClick={() => setWalkInChoice('auto')}
+                    onClick={() => {
+                      setWalkInTeamTouched(true);
+                      setWalkInChoice('auto');
+                    }}
                     className={`min-h-[44px] px-2 rounded-lg text-xs font-medium transition-colors duration-150 inline-flex items-center justify-center ${
                       walkInChoice === 'auto'
                         ? 'bg-primary text-primary-fg'
@@ -831,7 +849,10 @@ export function PlayerFormModal({
                   </button>
                   <button
                     type="button"
-                    onClick={() => setWalkInChoice('blue')}
+                    onClick={() => {
+                      setWalkInTeamTouched(true);
+                      setWalkInChoice('blue');
+                    }}
                     className={`min-h-[44px] px-2 rounded-lg text-xs font-medium transition-colors duration-150 inline-flex items-center justify-center gap-1.5 ${
                       walkInChoice === 'blue'
                         ? 'bg-blue-tint text-blue-light border border-blue-edge'
@@ -843,7 +864,10 @@ export function PlayerFormModal({
                   </button>
                   <button
                     type="button"
-                    onClick={() => setWalkInChoice('red')}
+                    onClick={() => {
+                      setWalkInTeamTouched(true);
+                      setWalkInChoice('red');
+                    }}
                     className={`min-h-[44px] px-2 rounded-lg text-xs font-medium transition-colors duration-150 inline-flex items-center justify-center gap-1.5 ${
                       walkInChoice === 'red'
                         ? 'bg-red-tint text-red-light border border-red-edge'
@@ -855,7 +879,10 @@ export function PlayerFormModal({
                   </button>
                   <button
                     type="button"
-                    onClick={() => setWalkInChoice('unassigned')}
+                    onClick={() => {
+                      setWalkInTeamTouched(true);
+                      setWalkInChoice('unassigned');
+                    }}
                     className={`min-h-[44px] px-2 rounded-lg text-xs font-medium transition-colors duration-150 inline-flex items-center justify-center ${
                       walkInChoice === 'unassigned'
                         ? 'bg-surface text-fg border border-edge'
@@ -865,6 +892,11 @@ export function PlayerFormModal({
                     Leave unassigned
                   </button>
                 </div>
+                {!hasSelectedWalkInGame && walkInChoice === 'unassigned' && (
+                  <p className="mt-1.5 text-xs text-fg-muted">
+                    Assigned when added to a sport or from the Teams page
+                  </p>
+                )}
               </div>
             )}
 

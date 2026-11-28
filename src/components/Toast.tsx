@@ -28,7 +28,7 @@ export function Toast({ toast, onDismiss }: ToastProps) {
     <div
       role="status"
       aria-live="polite"
-      className="fixed bottom-20 left-1/2 -translate-x-1/2 lg:left-auto lg:translate-x-0 lg:right-6 lg:bottom-6 z-50 max-w-[calc(100vw-2rem)] sm:max-w-md pointer-events-none"
+      className="fixed bottom-20 left-1/2 -translate-x-1/2 lg:left-auto lg:translate-x-0 lg:right-6 lg:bottom-6 z-[60] max-w-[calc(100vw-2rem)] sm:max-w-md pointer-events-none"
     >
       <div
         className={`pointer-events-auto flex items-center gap-2.5 px-3 py-2 border shadow-[0_6px_16px_rgba(0,0,0,0.45)] bg-surface transition-opacity duration-150 ${

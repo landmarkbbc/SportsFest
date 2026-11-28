@@ -41,6 +41,7 @@ interface TeamsTabProps {
   onToggleGroupKey: (groupKey: string) => void;
   onSetCollapsedGroupKeys: (nextKeys: Set<string>) => void;
   onOpenBulkAssignPreview: () => void;
+  onOpenNoSportsAssignPreview: () => void;
   onOpenRebalancePreview: () => void;
   onSelectSport: (target: SportNavigationTarget) => void;
   onSelectPlayer: (player: Player) => void;
@@ -107,16 +108,41 @@ export function TeamsTab({
   onToggleGroupKey,
   onSetCollapsedGroupKeys,
   onOpenBulkAssignPreview,
+  onOpenNoSportsAssignPreview,
   onOpenRebalancePreview,
   onSelectSport,
   onSelectPlayer,
 }: TeamsTabProps) {
   const isAdmin = role === 'admin';
   const [compareOpen, setCompareOpen] = useState(false);
+  const [noSportsExpanded, setNoSportsExpanded] = useState(false);
 
-  const unassignedCount = useMemo(
-    () => players.filter((p) => p.team === null).length,
+  const gameById = useMemo(() => new Map(games.map((g) => [g.id, g])), [games]);
+  const regularGames = useMemo(
+    () => games.filter((g) => g.type !== 'mass'),
+    [games]
+  );
+
+  const unassignedPlayers = useMemo(
+    () => players.filter((p) => p.team === null),
     [players]
+  );
+  const unassignedCount = unassignedPlayers.length;
+  const unassignedNoSportsPlayers = useMemo(
+    () =>
+      unassignedPlayers.filter(
+        (p) => getRegularEntries(p, gameById).length === 0
+      ),
+    [unassignedPlayers, gameById]
+  );
+  const unassignedNoSportsCount = unassignedNoSportsPlayers.length;
+  const unassignedWithSportsCount = unassignedCount - unassignedNoSportsCount;
+  const unassignedNoSportsGroups = useMemo(
+    () =>
+      buildTeamDepartmentGroups(unassignedNoSportsPlayers).filter(
+        (g) => g.members.length > 0
+      ),
+    [unassignedNoSportsPlayers]
   );
 
   const bluePlayers = useMemo(
@@ -127,12 +153,6 @@ export function TeamsTab({
   const redPlayers = useMemo(
     () => players.filter((p) => p.team === 'red'),
     [players]
-  );
-
-  const gameById = useMemo(() => new Map(games.map((g) => [g.id, g])), [games]);
-  const regularGames = useMemo(
-    () => games.filter((g) => g.type !== 'mass'),
-    [games]
   );
 
   const blueGroups = useMemo(
@@ -404,14 +424,14 @@ export function TeamsTab({
   }
 
   return (
-    <div className="flex flex-col h-[calc(100dvh-160px)] lg:h-[calc(100dvh-112px)] min-h-[420px] gap-3">
+    <div className="flex flex-col gap-3">
       {/* Top Action Bar */}
       <div className="flex flex-wrap items-center justify-between gap-2 shrink-0">
         {isAdmin ? (
           <div className="flex items-center gap-2 flex-wrap">
             <button
               type="button"
-              disabled={unassignedCount === 0}
+              disabled={unassignedWithSportsCount === 0}
               onClick={onOpenBulkAssignPreview}
               className="min-h-[44px] px-3.5 py-2 rounded-xl bg-primary text-primary-fg text-xs sm:text-sm font-medium hover:bg-primary-hover inline-flex items-center gap-1.5 transition-colors duration-150 disabled:opacity-45"
             >
@@ -419,12 +439,12 @@ export function TeamsTab({
               <span>Assign all unassigned</span>
             </button>
             <span className="text-xs font-medium text-fg-muted tabular-nums">
-              {unassignedCount} unassigned
+              {unassignedCount} unassigned ({unassignedNoSportsCount} with no sports)
             </span>
           </div>
         ) : (
           <span className="text-xs font-medium text-fg-muted tabular-nums">
-            {unassignedCount} unassigned
+            {unassignedCount} unassigned ({unassignedNoSportsCount} with no sports)
           </span>
         )}
 
@@ -460,14 +480,82 @@ export function TeamsTab({
         </div>
       </div>
 
+      {/* Unassigned Players With No Sports Yet */}
+      {!loading && unassignedNoSportsCount > 0 && (
+        <div className="bg-surface border border-edge rounded-xl overflow-hidden shrink-0">
+          <div className="px-3 py-1.5 flex items-center justify-between gap-2">
+            <button
+              type="button"
+              aria-expanded={noSportsExpanded}
+              onClick={() => setNoSportsExpanded((prev) => !prev)}
+              className="flex-1 min-h-[40px] px-1 py-1 rounded-lg hover:bg-nested transition-colors duration-150 flex items-center gap-1.5 text-left min-w-0"
+            >
+              <ChevronRight
+                size={16}
+                className={`text-fg-muted shrink-0 transition-transform duration-150 ${
+                  noSportsExpanded ? 'rotate-90' : ''
+                }`}
+              />
+              <span className="text-sm font-semibold text-fg truncate">No sports yet</span>
+              <span className="text-xs font-medium text-fg-muted tabular-nums shrink-0">
+                ({unassignedNoSportsCount})
+              </span>
+            </button>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={onOpenNoSportsAssignPreview}
+                className="min-h-[36px] px-3 py-1.5 rounded-xl border border-edge bg-nested hover:bg-edge/60 text-xs font-medium text-fg shrink-0 transition-colors duration-150"
+              >
+                Assign to teams
+              </button>
+            )}
+          </div>
+
+          {noSportsExpanded && (
+            <div className="px-3 pb-3 pt-2 border-t border-edge max-h-56 overflow-y-auto space-y-2">
+              {unassignedNoSportsGroups.map((group) => (
+                <div key={group.groupId}>
+                  <p className="px-1.5 py-0.5 text-xs font-semibold text-fg">
+                    {group.label}{' '}
+                    <span className="font-medium text-fg-muted tabular-nums">
+                      ({group.members.length})
+                    </span>
+                  </p>
+                  <ul className="pl-4 pr-1">
+                    {group.members.map((player) => (
+                      <li key={player.id} className="flex items-start gap-1.5">
+                        <span
+                          className="text-fg-muted text-sm leading-[1.3] py-[2px] select-none shrink-0"
+                          aria-hidden="true"
+                        >
+                          •
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => onSelectPlayer(player)}
+                          className="text-left text-sm leading-[1.3] text-fg hover:underline break-words py-[2px] flex-1"
+                        >
+                          <PlayerNameWithChurch name={player.name} church={player.church} />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Two Equal Independent-Scroll Columns */}
       {loading ? (
-        <div className="grid grid-cols-2 gap-3 lg:gap-4 flex-1 min-h-0">
+        <div className="grid grid-cols-2 gap-3 lg:gap-4 h-[calc(100dvh-220px)] lg:h-[calc(100dvh-172px)] min-h-[420px]">
           <div className="bg-surface border border-edge rounded-xl animate-pulse" />
           <div className="bg-surface border border-edge rounded-xl animate-pulse" />
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-3 lg:gap-4 flex-1 min-h-0">
+        <div className="grid grid-cols-2 gap-3 lg:gap-4 h-[calc(100dvh-220px)] lg:h-[calc(100dvh-172px)] min-h-[420px]">
           {renderTeamColumn('blue', bluePlayers, blueGroups, blueNoSportsGroups)}
           {renderTeamColumn('red', redPlayers, redGroups, redNoSportsGroups)}
         </div>

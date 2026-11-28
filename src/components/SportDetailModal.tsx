@@ -16,18 +16,24 @@ import {
   PlayerEntry,
   Role,
   SKILL_LEVEL_LABELS,
+  SeparationPair,
   SkillLevel,
   isMainEntry,
 } from '../types/models';
 import {
+  addNoSportsPlayerToGame,
   removePlayerGameEntry,
   restorePlayerGameEntry,
   setPlayerEntryAdmitted,
+  undoAddNoSportsPlayerToGame,
 } from '../services/db';
 import {
+  SingleAssignmentResult,
   computeGameStats,
   getDisplayGameBalanceStatus,
   getEffectiveLevel,
+  isGenderEligibleForGame,
+  planSingleAssignment,
 } from '../utils/balance';
 import {
   DIVISION_LEVELS,
@@ -45,11 +51,13 @@ import { ToastAction } from './Toast';
 
 interface SportDetailViewProps {
   game: Game;
+  games: Game[];
   players: Player[];
   bracketsByGameId: Map<string, Bracket>;
   pairsByGameId: Map<string, GamePairs>;
   massGamesByGameId: Map<string, MassGameDoc>;
   finalsByKey: Map<string, FinalMatch>;
+  separations: SeparationPair[];
   role: Role;
   initialDivision?: SkillLevel | null;
   initialGroup?: BracketGroup | null;
@@ -59,6 +67,7 @@ interface SportDetailViewProps {
   backLabel?: string;
   onBack: () => void;
   onOpenPlayerDetails: (player: Player) => void;
+  onShowAssignmentResult: (player: Player, result: SingleAssignmentResult) => void;
   onShowToast: (
     type: 'success' | 'error',
     text: string,
@@ -176,11 +185,13 @@ function PairListRow({
 
 export function SportDetailView({
   game,
+  games,
   players,
   bracketsByGameId,
   pairsByGameId,
   massGamesByGameId,
   finalsByKey,
+  separations,
   role,
   initialDivision,
   initialGroup,
@@ -190,6 +201,7 @@ export function SportDetailView({
   backLabel,
   onBack,
   onOpenPlayerDetails,
+  onShowAssignmentResult,
   onShowToast,
 }: SportDetailViewProps) {
   const isIndividual = game.type === 'individual';
@@ -239,6 +251,9 @@ export function SportDetailView({
     inBracket: boolean;
   } | null>(null);
   const [removing, setRemoving] = useState(false);
+  const [noSportsTarget, setNoSportsTarget] = useState<Player | null>(null);
+  const [noSportsLevel, setNoSportsLevel] = useState<SkillLevel | null>(null);
+  const [addingNoSports, setAddingNoSports] = useState(false);
 
   useEffect(() => {
     setSubTab(initialTab ?? (hasExistingBracket ? 'matches' : 'players'));
@@ -246,6 +261,8 @@ export function SportDetailView({
     setBracketGroup(resolveInitialGroup());
     setActionTarget(null);
     setConfirmRemoveTarget(null);
+    setNoSportsTarget(null);
+    setNoSportsLevel(null);
     // Reset default tab only when switching game or navigating from another screen
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game.id, navKey]);
@@ -288,6 +305,17 @@ export function SportDetailView({
   const backupBlue = backupParticipants.filter((p) => p.player.team === 'blue');
   const backupRed = backupParticipants.filter((p) => p.player.team === 'red');
   const backupUnassigned = backupParticipants.filter((p) => p.player.team === null);
+
+  const noSportsEligible = useMemo(
+    () =>
+      players
+        .filter(
+          (p) => p.entries.length === 0 && isGenderEligibleForGame(p.gender, game)
+        )
+        .slice()
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [players, game]
+  );
 
   const divisionSummaries = useMemo(() => {
     if (!game.hasDivisions) return [];
@@ -523,6 +551,74 @@ export function SportDetailView({
     } else {
       setActionTarget(null);
       setConfirmRemoveTarget({ player, entry, inBracket });
+    }
+  }
+
+  async function handleAddNoSportsPlayer() {
+    if (!noSportsTarget || addingNoSports) return;
+    if (role !== 'admin' && role !== 'scorer') return;
+    if (game.usesSkillLevel && noSportsLevel === null) return;
+
+    const target = noSportsTarget;
+    const newEntry: PlayerEntry = {
+      slot: game.session === 'morning' ? 'morning' : 'afternoon',
+      gameId: game.id,
+      selfLevel: noSportsLevel ?? 2,
+      overrideLevel: null,
+    };
+    const hasBracketOrPairs = hasExistingBracket || pairsByGameId.has(game.id);
+    const plan =
+      target.team === null
+        ? planSingleAssignment(
+            { ...target, entries: [newEntry] },
+            players,
+            games,
+            Math.random,
+            separations
+          )
+        : null;
+
+    setAddingNoSports(true);
+    try {
+      const { assignedTeam } = await addNoSportsPlayerToGame(
+        target.id,
+        newEntry,
+        plan ? plan.team : null
+      );
+      setNoSportsTarget(null);
+      setNoSportsLevel(null);
+
+      if (assignedTeam !== null && plan) {
+        onShowAssignmentResult(
+          { ...target, entries: [newEntry], team: assignedTeam },
+          plan
+        );
+      }
+
+      onShowToast('success', `Added to ${game.name}`, {
+        durationMs: 5000,
+        warningText: hasBracketOrPairs ? 'Existing bracket not changed' : undefined,
+        action: {
+          label: 'Undo',
+          onClick: async () => {
+            try {
+              await undoAddNoSportsPlayerToGame(target.id, game.id, assignedTeam);
+            } catch (err) {
+              onShowToast(
+                'error',
+                formatWriteError(err, 'Could not undo adding player.')
+              );
+            }
+          },
+        },
+      });
+    } catch (err) {
+      onShowToast(
+        'error',
+        formatWriteError(err, `Failed to add to ${game.name}.`)
+      );
+    } finally {
+      setAddingNoSports(false);
     }
   }
 
@@ -1056,6 +1152,56 @@ export function SportDetailView({
             </div>
           )}
 
+          {/* Players with no sports */}
+          {noSportsEligible.length > 0 && (
+            <div className="bg-surface border border-edge rounded-xl p-4 space-y-2">
+              <h3 className="text-sm font-semibold text-fg tabular-nums">
+                Players with no sports ({noSportsEligible.length})
+              </h3>
+              <ul>
+                {noSportsEligible.map((player) => (
+                  <li key={player.id} className="border-b border-edge last:border-b-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNoSportsTarget(player);
+                        setNoSportsLevel(null);
+                      }}
+                      className="w-full text-left flex items-center justify-between gap-2 py-2 px-1.5 -mx-1.5 rounded-lg hover:bg-nested transition-colors duration-150"
+                    >
+                      <div className="flex items-center flex-wrap gap-x-1.5 gap-y-1 min-w-0 flex-1">
+                        <span
+                          className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                            player.team === 'blue'
+                              ? 'bg-blue-team'
+                              : player.team === 'red'
+                                ? 'bg-red-team'
+                                : 'bg-fg-muted'
+                          }`}
+                          aria-label={
+                            player.team === 'blue'
+                              ? 'Blue team'
+                              : player.team === 'red'
+                                ? 'Red team'
+                                : 'Unassigned'
+                          }
+                        />
+                        <PlayerNameWithChurch
+                          name={player.name}
+                          church={player.church}
+                          className="text-sm font-medium text-fg leading-snug break-words"
+                        />
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-nested border border-edge text-fg-muted shrink-0">
+                          {player.department}
+                        </span>
+                      </div>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {/* e. Department Comparison at the very bottom */}
           <div className="bg-surface border border-edge rounded-xl overflow-hidden">
             <div className="px-4 py-2.5 bg-nested border-b border-edge">
@@ -1211,6 +1357,113 @@ export function SportDetailView({
               >
                 {removing ? 'Removing...' : 'Remove'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* No-Sports Player Popup */}
+      {noSportsTarget && (
+        <div
+          className="fixed inset-0 z-50 bg-overlay flex items-end sm:items-center justify-center p-0 sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="no-sports-player-title"
+        >
+          <div className="bg-surface w-full sm:max-w-sm rounded-t-2xl sm:rounded-xl border border-edge p-4 sm:p-5 shadow-xl space-y-4 pb-safe">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2
+                  id="no-sports-player-title"
+                  className="text-[16px] font-semibold text-fg break-words flex items-center flex-wrap gap-1.5"
+                >
+                  <span
+                    className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                      noSportsTarget.team === 'blue'
+                        ? 'bg-blue-team'
+                        : noSportsTarget.team === 'red'
+                          ? 'bg-red-team'
+                          : 'bg-fg-muted'
+                    }`}
+                    aria-hidden="true"
+                  />
+                  <PlayerNameWithChurch
+                    name={noSportsTarget.name}
+                    church={noSportsTarget.church}
+                  />
+                  <span className="text-fg-muted font-normal">
+                    · {noSportsTarget.department}
+                  </span>
+                </h2>
+              </div>
+              <button
+                type="button"
+                disabled={addingNoSports}
+                onClick={() => setNoSportsTarget(null)}
+                aria-label="Close"
+                className="min-w-[44px] min-h-[44px] -mr-2 -mt-2 flex items-center justify-center rounded-xl text-fg-muted hover:text-fg hover:bg-nested transition-colors duration-150 disabled:opacity-50"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {(role === 'admin' || role === 'scorer') && game.usesSkillLevel && (
+              <div>
+                <span className="block text-xs font-medium text-fg-muted mb-1.5">
+                  Skill level (required)
+                </span>
+                <div className="grid grid-cols-3 gap-1 p-1 bg-nested border border-edge rounded-xl">
+                  {([1, 2, 3] as SkillLevel[]).map((lvl) => {
+                    const active = noSportsLevel === lvl;
+                    return (
+                      <button
+                        key={lvl}
+                        type="button"
+                        disabled={addingNoSports}
+                        onClick={() => setNoSportsLevel(lvl)}
+                        className={`min-h-[44px] px-2 rounded-lg text-xs font-medium transition-colors duration-150 ${
+                          active
+                            ? 'bg-primary text-primary-fg'
+                            : 'text-fg-muted hover:text-fg'
+                        }`}
+                      >
+                        L{lvl} {SKILL_LEVEL_LABELS[lvl]}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-2.5">
+              <button
+                type="button"
+                disabled={addingNoSports}
+                onClick={() => {
+                  const p = noSportsTarget;
+                  setNoSportsTarget(null);
+                  onOpenPlayerDetails(p);
+                }}
+                className={`w-full min-h-[44px] px-4 py-2.5 rounded-xl text-sm font-medium transition-colors duration-150 disabled:opacity-50 ${
+                  role === 'admin' || role === 'scorer'
+                    ? 'border border-edge bg-transparent text-fg hover:bg-nested'
+                    : 'bg-primary text-primary-fg hover:bg-primary-hover'
+                }`}
+              >
+                Details
+              </button>
+
+              {(role === 'admin' || role === 'scorer') && (
+                <button
+                  type="button"
+                  disabled={
+                    addingNoSports || (game.usesSkillLevel && noSportsLevel === null)
+                  }
+                  onClick={() => void handleAddNoSportsPlayer()}
+                  className="w-full min-h-[44px] px-4 py-2.5 rounded-xl bg-primary text-primary-fg text-sm font-medium hover:bg-primary-hover transition-colors duration-150 disabled:opacity-45"
+                >
+                  {addingNoSports ? 'Adding...' : `Add to ${game.name}`}
+                </button>
+              )}
             </div>
           </div>
         </div>

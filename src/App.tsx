@@ -664,7 +664,13 @@ export default function App() {
   }
 
   function handleOpenBulkAssignPreview() {
-    const plan = planBulkAssignment(players, games, separations);
+    const plan = planBulkAssignment(players, games, separations, 'with_sports');
+    setBulkPlan(plan);
+    setBulkPreviewOpen(true);
+  }
+
+  function handleOpenNoSportsAssignPreview() {
+    const plan = planBulkAssignment(players, games, separations, 'no_sports');
     setBulkPlan(plan);
     setBulkPreviewOpen(true);
   }
@@ -872,11 +878,13 @@ export default function App() {
           {activeSport && sportNav ? (
             <SportDetailView
               game={activeSport}
+              games={games}
               players={players}
               bracketsByGameId={bracketsByGameId}
               pairsByGameId={pairsByGameId}
               massGamesByGameId={massGamesByGameId}
               finalsByKey={finalsByKey}
+              separations={separations}
               role={role}
               initialDivision={sportNav.division ?? null}
               initialGroup={sportNav.group ?? null}
@@ -895,6 +903,11 @@ export default function App() {
                 setSelectedPlayer(player);
                 setPlayerModalMode('edit');
                 setPlayerModalOpen(true);
+              }}
+              onShowAssignmentResult={(playerRecord, result) => {
+                setAssignedPlayerRecord(playerRecord);
+                setAssignedResult(result);
+                setAssignConfirmOpen(true);
               }}
               onShowToast={showToast}
             />
@@ -930,6 +943,7 @@ export default function App() {
                   onToggleGroupKey={handleToggleTeamGroupKey}
                   onSetCollapsedGroupKeys={setCollapsedTeamGroupKeys}
                   onOpenBulkAssignPreview={handleOpenBulkAssignPreview}
+                  onOpenNoSportsAssignPreview={handleOpenNoSportsAssignPreview}
                   onOpenRebalancePreview={handleOpenRebalancePreview}
                   onSelectSport={(target) => openSportPage({ ...target, fromTab: 'teams' })}
                   onSelectPlayer={(player) => {

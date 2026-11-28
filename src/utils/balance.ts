@@ -910,7 +910,11 @@ export interface BulkDepartmentComparison {
   };
 }
 
+export type BulkAssignmentMode = 'with_sports' | 'no_sports';
+
 export interface BulkAssignmentPlan {
+  mode: BulkAssignmentMode;
+  leftUnassignedNoSportsCount: number;
   proposedBlue: Player[];
   proposedRed: Player[];
   proposedTeamByPlayerId: Record<string, TeamId>;
@@ -983,32 +987,50 @@ function deltaRosterCostForSwap(
 export function planBulkAssignment(
   allPlayers: Player[],
   games: Game[],
-  separations: readonly SeparationPair[] = []
+  separations: readonly SeparationPair[] = [],
+  mode: BulkAssignmentMode = 'with_sports'
 ): BulkAssignmentPlan {
   const regularGames = games.filter((g) => g.type !== 'mass');
   const gameById = new Map(games.map((g) => [g.id, g]));
   const playerById = new Map(allPlayers.map((p) => [p.id, p]));
   const rulePlayerIds = getSeparationPartnerIds(separations, playerById);
   const unassigned = allPlayers.filter((p) => p.team === null);
+  const unassignedNoSports = unassigned.filter(
+    (p) => getRegularEntries(p, gameById).length === 0
+  );
+  const leftUnassignedNoSportsCount =
+    mode === 'with_sports' ? unassignedNoSports.length : 0;
 
-  const withGames = unassigned
-    .filter((p) => getRegularMainEntries(p, gameById).length > 0)
-    .sort((a, b) => {
-      const levelDiff =
-        getPlayerTotalEffectiveLevel(b, gameById) -
-        getPlayerTotalEffectiveLevel(a, gameById);
-      if (levelDiff !== 0) return levelDiff;
-      const entryDiff =
-        getRegularMainEntries(b, gameById).length - getRegularMainEntries(a, gameById).length;
-      if (entryDiff !== 0) return entryDiff;
-      const ruleDiff = (rulePlayerIds.has(b.id) ? 1 : 0) - (rulePlayerIds.has(a.id) ? 1 : 0);
-      if (ruleDiff !== 0) return ruleDiff;
-      if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
-      return a.id.localeCompare(b.id);
-    });
+  const withGames =
+    mode === 'with_sports'
+      ? unassigned
+          .filter((p) => getRegularMainEntries(p, gameById).length > 0)
+          .sort((a, b) => {
+            const levelDiff =
+              getPlayerTotalEffectiveLevel(b, gameById) -
+              getPlayerTotalEffectiveLevel(a, gameById);
+            if (levelDiff !== 0) return levelDiff;
+            const entryDiff =
+              getRegularMainEntries(b, gameById).length - getRegularMainEntries(a, gameById).length;
+            if (entryDiff !== 0) return entryDiff;
+            const ruleDiff = (rulePlayerIds.has(b.id) ? 1 : 0) - (rulePlayerIds.has(a.id) ? 1 : 0);
+            if (ruleDiff !== 0) return ruleDiff;
+            if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+            return a.id.localeCompare(b.id);
+          })
+      : [];
 
-  const noGames = unassigned
-    .filter((p) => getRegularMainEntries(p, gameById).length === 0)
+  // Phase 2 pool: backup-only players in 'with_sports' mode, or no-sports players in 'no_sports' mode
+  const noGames = (
+    mode === 'with_sports'
+      ? unassigned.filter(
+          (p) =>
+            getRegularEntries(p, gameById).length > 0 &&
+            getRegularMainEntries(p, gameById).length === 0
+        )
+      : unassignedNoSports
+  )
+    .slice()
     .sort((a, b) => {
       const ruleDiff = (rulePlayerIds.has(b.id) ? 1 : 0) - (rulePlayerIds.has(a.id) ? 1 : 0);
       if (ruleDiff !== 0) return ruleDiff;
@@ -1170,13 +1192,16 @@ export function planBulkAssignment(
     playerById,
     (id) => proposedMap.get(id) ?? playerById.get(id)?.team ?? null
   );
-  const gameComparisons: GameBalanceComparison[] = regularGames
-    .map((game) => ({
-      game,
-      before: computeGameStats(allPlayers, game.id, undefined, game),
-      after: computeGameStats(allPlayers, game.id, proposedMap, game),
-    }))
-    .filter((item) => item.after.totalAssigned > 0 || item.before.unassignedCount > 0);
+  const gameComparisons: GameBalanceComparison[] =
+    mode === 'no_sports'
+      ? []
+      : regularGames
+          .map((game) => ({
+            game,
+            before: computeGameStats(allPlayers, game.id, undefined, game),
+            after: computeGameStats(allPlayers, game.id, proposedMap, game),
+          }))
+          .filter((item) => item.after.totalAssigned > 0 || item.before.unassignedCount > 0);
 
   const beforeDeptBlue: Record<Department, number> = { Kids: 0, YP: 0, SP: 0, Adults: 0 };
   const beforeDeptRed: Record<Department, number> = { Kids: 0, YP: 0, SP: 0, Adults: 0 };
@@ -1208,6 +1233,8 @@ export function planBulkAssignment(
   }
 
   return {
+    mode,
+    leftUnassignedNoSportsCount,
     proposedBlue,
     proposedRed,
     proposedTeamByPlayerId,

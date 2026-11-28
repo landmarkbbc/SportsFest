@@ -56,8 +56,17 @@ export function BulkAssignPreviewModal({
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
-          <div className="p-3 rounded-xl bg-nested border border-edge text-xs text-fg-muted">
-            Nothing is saved yet. Review the proposed teams and game balance below, then tap Confirm Assignments.
+          <div className="p-3 rounded-xl bg-nested border border-edge text-xs text-fg-muted space-y-1">
+            <p>
+              Nothing is saved yet. Review the proposed teams and game balance below, then tap Confirm Assignments.
+            </p>
+            {plan.leftUnassignedNoSportsCount > 0 && (
+              <p className="text-fg font-medium tabular-nums">
+                {plan.leftUnassignedNoSportsCount}{' '}
+                {plan.leftUnassignedNoSportsCount === 1 ? 'player' : 'players'} with no sports{' '}
+                {plan.leftUnassignedNoSportsCount === 1 ? 'was' : 'were'} left unassigned
+              </p>
+            )}
           </div>
 
           {plan.unresolvedSeparations.length > 0 && (
@@ -221,7 +230,9 @@ export function BulkAssignPreviewModal({
             </h3>
             {plan.gameComparisons.length === 0 ? (
               <div className="p-4 rounded-xl border border-edge bg-nested text-xs text-fg-muted">
-                No game entries among unassigned players. Assignments balance overall headcount and department counts.
+                {plan.mode === 'no_sports'
+                  ? 'No game entries among these players. Assignments balance headcount, department, department-by-gender, church, and keep-apart rules.'
+                  : 'No game entries among unassigned players. Assignments balance overall headcount and department counts.'}
               </div>
             ) : (
               <div className="space-y-2">
@@ -268,7 +279,7 @@ export function BulkAssignPreviewModal({
           </button>
           <button
             type="button"
-            disabled={confirming}
+            disabled={confirming || totalProposed === 0}
             onClick={onConfirm}
             className="min-h-[44px] px-5 py-2.5 rounded-xl bg-primary text-primary-fg text-sm font-medium hover:bg-primary-hover transition-colors duration-150 disabled:opacity-50"
           >

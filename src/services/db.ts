@@ -1247,6 +1247,80 @@ export async function setPlayerEntryAdmitted(
   }
 }
 
+export async function addNoSportsPlayerToGame(
+  playerId: string,
+  entry: PlayerEntry,
+  autoAssignTeam: TeamId | null
+): Promise<{ assignedTeam: TeamId | null }> {
+  const playerRef = doc(db, 'players', playerId);
+  try {
+    return await runTransaction(db, async (tx) => {
+      const snap = await tx.get(playerRef);
+      if (!snap.exists()) {
+        throw new Error('Player not found.');
+      }
+      const data = snap.data() as Player;
+      const currentEntries = Array.isArray(data.entries) ? data.entries : [];
+      if (currentEntries.length > 0) {
+        throw new Error('Player already has a sport.');
+      }
+      const isUnassigned = data.team === null || data.team === undefined;
+      const assignedTeam = isUnassigned && autoAssignTeam !== null ? autoAssignTeam : null;
+      const payload: Record<string, unknown> = {
+        entries: [sanitizePlayerEntry(entry)],
+        updatedAt: Date.now(),
+      };
+      if (assignedTeam !== null) {
+        payload.team = assignedTeam;
+      }
+      tx.update(playerRef, payload);
+      return { assignedTeam };
+    });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message === 'Player not found.' || error.message === 'Player already has a sport.')
+    ) {
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.UPDATE, `players/${playerId}`);
+  }
+}
+
+export async function undoAddNoSportsPlayerToGame(
+  playerId: string,
+  gameId: string,
+  assignedTeamByThisAction: TeamId | null
+): Promise<void> {
+  const playerRef = doc(db, 'players', playerId);
+  try {
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(playerRef);
+      if (!snap.exists()) {
+        throw new Error('Player not found.');
+      }
+      const data = snap.data() as Player;
+      const currentEntries = Array.isArray(data.entries) ? data.entries : [];
+      const nextEntries = currentEntries
+        .filter((e) => e.gameId !== gameId)
+        .map(sanitizePlayerEntry);
+      const payload: Record<string, unknown> = {
+        entries: nextEntries,
+        updatedAt: Date.now(),
+      };
+      if (assignedTeamByThisAction !== null && data.team === assignedTeamByThisAction) {
+        payload.team = null;
+      }
+      tx.update(playerRef, payload);
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'Player not found.') {
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.UPDATE, `players/${playerId}`);
+  }
+}
+
 export async function assignPlayerTeam(
   playerId: string,
   team: TeamId
