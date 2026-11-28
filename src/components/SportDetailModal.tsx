@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ArrowLeft, Trophy, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, ChevronRight, Trophy, X } from 'lucide-react';
 import {
   Bracket,
   BracketGroup,
   DEPARTMENTS,
+  Department,
   ELIGIBILITY_LABELS,
   FinalMatch,
   GAME_SESSION_LABELS,
@@ -11,6 +12,7 @@ import {
   Game,
   GamePair,
   GamePairs,
+  Gender,
   MassGameDoc,
   Player,
   PlayerEntry,
@@ -80,6 +82,21 @@ interface ParticipantRowItem {
   entry: PlayerEntry;
   effectiveLevel: SkillLevel;
 }
+
+const NO_SPORTS_GROUP_SPECS: {
+  key: string;
+  label: string;
+  dept: Department;
+  gender?: Gender;
+}[] = [
+  { key: 'Kids', label: 'Kids', dept: 'Kids' },
+  { key: 'YP:M', label: 'YP Males', dept: 'YP', gender: 'M' },
+  { key: 'YP:F', label: 'YP Females', dept: 'YP', gender: 'F' },
+  { key: 'SP:M', label: 'SP Males', dept: 'SP', gender: 'M' },
+  { key: 'SP:F', label: 'SP Females', dept: 'SP', gender: 'F' },
+  { key: 'Adults:M', label: 'Adults Males', dept: 'Adults', gender: 'M' },
+  { key: 'Adults:F', label: 'Adults Females', dept: 'Adults', gender: 'F' },
+];
 
 function PlayerListRow({
   item,
@@ -254,6 +271,9 @@ export function SportDetailView({
   const [noSportsTarget, setNoSportsTarget] = useState<Player | null>(null);
   const [noSportsLevel, setNoSportsLevel] = useState<SkillLevel | null>(null);
   const [addingNoSports, setAddingNoSports] = useState(false);
+  const [collapsedNoSportsGroups, setCollapsedNoSportsGroups] = useState<Set<string>>(
+    () => new Set()
+  );
 
   useEffect(() => {
     setSubTab(initialTab ?? (hasExistingBracket ? 'matches' : 'players'));
@@ -263,6 +283,7 @@ export function SportDetailView({
     setConfirmRemoveTarget(null);
     setNoSportsTarget(null);
     setNoSportsLevel(null);
+    setCollapsedNoSportsGroups(new Set());
     // Reset default tab only when switching game or navigating from another screen
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game.id, navKey]);
@@ -315,6 +336,20 @@ export function SportDetailView({
         .slice()
         .sort((a, b) => a.name.localeCompare(b.name)),
     [players, game]
+  );
+
+  const noSportsGroups = useMemo(
+    () =>
+      NO_SPORTS_GROUP_SPECS.map((spec) => ({
+        key: spec.key,
+        label: spec.label,
+        members: noSportsEligible.filter(
+          (p) =>
+            p.department === spec.dept &&
+            (spec.gender === undefined || p.gender === spec.gender)
+        ),
+      })).filter((g) => g.members.length > 0),
+    [noSportsEligible]
   );
 
   const divisionSummaries = useMemo(() => {
@@ -1154,51 +1189,84 @@ export function SportDetailView({
 
           {/* Players with no sports */}
           {noSportsEligible.length > 0 && (
-            <div className="bg-surface border border-edge rounded-xl p-4 space-y-2">
+            <div className="bg-surface border border-edge rounded-xl p-4 space-y-2.5">
               <h3 className="text-sm font-semibold text-fg tabular-nums">
                 Players with no sports ({noSportsEligible.length})
               </h3>
-              <ul>
-                {noSportsEligible.map((player) => (
-                  <li key={player.id} className="border-b border-edge last:border-b-0">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setNoSportsTarget(player);
-                        setNoSportsLevel(null);
-                      }}
-                      className="w-full text-left flex items-center justify-between gap-2 py-2 px-1.5 -mx-1.5 rounded-lg hover:bg-nested transition-colors duration-150"
-                    >
-                      <div className="flex items-center flex-wrap gap-x-1.5 gap-y-1 min-w-0 flex-1">
-                        <span
-                          className={`w-2.5 h-2.5 rounded-full shrink-0 ${
-                            player.team === 'blue'
-                              ? 'bg-blue-team'
-                              : player.team === 'red'
-                                ? 'bg-red-team'
-                                : 'bg-fg-muted'
+              <div className="space-y-2">
+                {noSportsGroups.map((group) => {
+                  const isCollapsed = collapsedNoSportsGroups.has(group.key);
+                  return (
+                    <div key={group.key}>
+                      <button
+                        type="button"
+                        aria-expanded={!isCollapsed}
+                        onClick={() =>
+                          setCollapsedNoSportsGroups((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(group.key)) next.delete(group.key);
+                            else next.add(group.key);
+                            return next;
+                          })
+                        }
+                        className="w-full px-1.5 py-1.5 -mx-1.5 rounded-lg hover:bg-nested transition-colors duration-150 flex items-center gap-1.5 text-left"
+                      >
+                        <ChevronRight
+                          size={16}
+                          className={`text-fg-muted shrink-0 transition-transform duration-150 ${
+                            isCollapsed ? '' : 'rotate-90'
                           }`}
-                          aria-label={
-                            player.team === 'blue'
-                              ? 'Blue team'
-                              : player.team === 'red'
-                                ? 'Red team'
-                                : 'Unassigned'
-                          }
                         />
-                        <PlayerNameWithChurch
-                          name={player.name}
-                          church={player.church}
-                          className="text-sm font-medium text-fg leading-snug break-words"
-                        />
-                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-nested border border-edge text-fg-muted shrink-0">
-                          {player.department}
+                        <span className="text-xs font-semibold text-fg leading-snug">
+                          {group.label}{' '}
+                          <span className="font-medium text-fg-muted tabular-nums">
+                            ({group.members.length})
+                          </span>
                         </span>
-                      </div>
-                    </button>
-                  </li>
-                ))}
-              </ul>
+                      </button>
+
+                      {!isCollapsed && (
+                        <ul className="pl-5">
+                          {group.members.map((player) => (
+                            <li key={player.id} className="border-b border-edge last:border-b-0">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setNoSportsTarget(player);
+                                  setNoSportsLevel(null);
+                                }}
+                                className="w-full text-left flex items-center gap-1.5 py-2 px-1.5 -mx-1.5 rounded-lg hover:bg-nested transition-colors duration-150"
+                              >
+                                <span
+                                  className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                                    player.team === 'blue'
+                                      ? 'bg-blue-team'
+                                      : player.team === 'red'
+                                        ? 'bg-red-team'
+                                        : 'bg-fg-muted'
+                                  }`}
+                                  aria-label={
+                                    player.team === 'blue'
+                                      ? 'Blue team'
+                                      : player.team === 'red'
+                                        ? 'Red team'
+                                        : 'Unassigned'
+                                  }
+                                />
+                                <PlayerNameWithChurch
+                                  name={player.name}
+                                  church={player.church}
+                                  className="text-sm font-medium text-fg leading-snug break-words"
+                                />
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
 
